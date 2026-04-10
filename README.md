@@ -3,15 +3,7 @@
 An autonomous trading bot for prediction markets (Polymarket and Kalshi),
 built in six days by a hydrologist using Claude Code.
 
-This is the system described in [_I study rivers for a living. Last week I
-built an autonomous trading platform. So did everyone else_](https://www.bloomberg.com/opinion)
-(Bloomberg Opinion, April 2026). It exists primarily as evidence for the
-op-ed's thesis: that AI coding agents have collapsed the barrier to building
-production-grade trading infrastructure, and that the resulting concentration
-of correlated AI behavior in financial markets is a systemic risk regulators
-are not currently equipped to monitor.
-
-It also makes (small) money.
+It makes (small) money.
 
 ## What it does
 
@@ -79,16 +71,7 @@ interception happens in `exchange/paper.py`. The risk manager in
 
 Trades real money on Polymarket and Kalshi as of April 2026. P&L is
 modest. Calibration is live and learning from each market resolution.
-Source code is public not because the strategy is secret, but because the
-op-ed argues it shouldn't be.
 
 ## License
 
 MIT.
-
-## A note from the hydrologist
-
-I am not a quant. I am not a trader. I am not a financial professional. I
-study rivers and snowmelt for a living. If I can build this in six days,
-the relevant question for regulators is no longer "how do we monitor the
-banks" but "how do we monitor the swarm."
