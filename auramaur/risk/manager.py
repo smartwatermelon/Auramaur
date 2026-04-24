@@ -165,7 +165,7 @@ class RiskManager:
             position_size = self.kelly.calculate(
                 claude_prob=signal.claude_prob,
                 market_prob=signal.market_prob,
-                bankroll=cash,
+                bankroll=equity,
                 heat_mult=KellySizer.heat_multiplier(heat),
                 confidence_mult=KellySizer.confidence_multiplier(signal.claude_confidence),
                 liquidity_mult=KellySizer.liquidity_multiplier(max(market.liquidity, market.volume)),
