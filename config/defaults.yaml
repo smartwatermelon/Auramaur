@@ -2,7 +2,7 @@
 
 execution:
   live: true
-  paper_initial_balance: 111.0
+  paper_initial_balance: 500.0
   limit_order_ttl_seconds: 300
   spread_capture_min_bps: 50
   stop_loss_pct: 30.0
