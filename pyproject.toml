@@ -30,6 +30,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "yfinance>=1.2.0",
     "web3>=7.0",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
