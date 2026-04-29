@@ -1,0 +1,8 @@
+[flake8]
+# Match the project's ruff configuration in pyproject.toml so flake8
+# (run via Andrew's global pre-commit hook) doesn't flag style decisions
+# the project has already accepted via ruff.
+max-line-length = 100
+# E203 (whitespace before ':') and W503 (line break before binary op)
+# conflict with black/ruff formatting conventions.
+extend-ignore = E203, W503
