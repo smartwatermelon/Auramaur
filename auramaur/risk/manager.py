@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 
 import structlog
 from pydantic import BaseModel
 
 from auramaur.db.database import Database
-from auramaur.exchange.models import Confidence, Market, Signal
+from auramaur.exchange.models import Market, Signal
 from auramaur.risk.checks import (
     CheckResult,
     check_category_exposure,
@@ -72,10 +71,13 @@ class RiskManager:
         # avg price for positions with no live quote yet). Drives regime
         # switching: capital-starved books get growth-mode params, mature
         # books get the preservation-tuned config values.
-        cash = available_cash if available_cash is not None else self.settings.execution.paper_initial_balance
+        cash = (
+            available_cash
+            if available_cash is not None
+            else self.settings.execution.paper_initial_balance
+        )
         position_notional = sum(
-            p.size * (p.current_price or p.avg_price)
-            for p in positions
+            p.size * (p.current_price or p.avg_price) for p in positions
         )
         equity = cash + position_notional
         regime = resolve_regime(
@@ -87,7 +89,11 @@ class RiskManager:
 
         # Time to resolution
         if market.end_date:
-            end = market.end_date if market.end_date.tzinfo else market.end_date.replace(tzinfo=timezone.utc)
+            end = (
+                market.end_date
+                if market.end_date.tzinfo
+                else market.end_date.replace(tzinfo=timezone.utc)
+            )
             hours_remaining = max(
                 (end - datetime.now(timezone.utc)).total_seconds() / 3600.0, 0.0
             )
@@ -111,16 +117,28 @@ class RiskManager:
             await check_daily_loss(abs(daily_pnl), rc.daily_loss_limit),
             await check_max_positions(len(positions), rc.max_open_positions),
             await check_min_edge(signal.edge, regime.min_edge_pct),
-            await check_min_liquidity(max(market.liquidity, market.volume), rc.min_liquidity),
+            await check_min_liquidity(
+                max(market.liquidity, market.volume), rc.min_liquidity
+            ),
             await check_max_spread(market.spread, rc.max_spread_pct),
             await check_confidence_floor(signal.claude_confidence, rc.confidence_floor),
             await check_implied_prob_bounds(
                 signal.market_prob, rc.implied_prob_min, rc.implied_prob_max
             ),
-            await check_category_exposure(market.category, cat_exp, rc.category_exposure_cap_pct),
-            await check_correlation(signal.market_id, correlated, rc.max_correlated_positions),
-            await check_time_to_resolution(hours_remaining, rc.time_to_resolution_min_hours),
-            await check_second_opinion_divergence(divergence, rc.second_opinion_divergence_max),
+            await check_category_exposure(
+                market.category, cat_exp, rc.category_exposure_cap_pct
+            ),
+            await check_correlation(
+                signal.market_id, correlated, rc.max_correlated_positions
+            ),
+            await check_time_to_resolution(
+                hours_remaining,
+                rc.time_to_resolution_min_hours,
+                rc.time_to_resolution_max_days * 24.0,
+            ),
+            await check_second_opinion_divergence(
+                divergence, rc.second_opinion_divergence_max
+            ),
         ]
 
         all_passed = all(c.passed for c in checks)
@@ -167,8 +185,12 @@ class RiskManager:
                 market_prob=signal.market_prob,
                 bankroll=equity,
                 heat_mult=KellySizer.heat_multiplier(heat),
-                confidence_mult=KellySizer.confidence_multiplier(signal.claude_confidence),
-                liquidity_mult=KellySizer.liquidity_multiplier(max(market.liquidity, market.volume)),
+                confidence_mult=KellySizer.confidence_multiplier(
+                    signal.claude_confidence
+                ),
+                liquidity_mult=KellySizer.liquidity_multiplier(
+                    max(market.liquidity, market.volume)
+                ),
                 category_mult=category_mult,
                 volatility_mult=vol_mult,
                 max_stake=regime.max_stake,
@@ -176,9 +198,7 @@ class RiskManager:
             )
 
         reason = (
-            "All checks passed"
-            if all_passed
-            else "; ".join(c.reason for c in failed)
+            "All checks passed" if all_passed else "; ".join(c.reason for c in failed)
         )
 
         decision = RiskDecision(
