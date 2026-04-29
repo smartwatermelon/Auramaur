@@ -350,6 +350,9 @@ class KalshiPositionSyncer:
         self._paper = paper
 
     async def sync(self) -> list[LivePosition]:
+        if not self._settings.is_live and self._paper is not None:
+            return await self._sync_paper()
+
         try:
             await self._exchange.sync_positions(self._db)
         except Exception as e:
@@ -382,6 +385,77 @@ class KalshiPositionSyncer:
             )
 
         log.info("sync.kalshi.done", positions=len(positions))
+        return positions
+
+    async def _sync_paper(self) -> list[LivePosition]:
+        """Sync paper positions: persist PaperTrader state to portfolio table and
+        return as LivePosition list so the allocator's held_market_ids guard works.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        positions: list[LivePosition] = []
+        current_ids: set[str] = set()
+
+        for market_id, pos in self._paper.positions.items():
+            token = pos.token if pos.token else TokenType.YES
+            token_id = pos.token_id or market_id
+            category = getattr(pos, "category", "") or ""
+            current_ids.add(market_id)
+
+            await self._db.execute(
+                """INSERT INTO portfolio
+                   (market_id, exchange, side, size, avg_price, current_price,
+                    category, token, token_id, is_paper, updated_at)
+                   VALUES (?, 'kalshi', ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                   ON CONFLICT(market_id) DO UPDATE SET
+                       exchange = excluded.exchange,
+                       side = excluded.side,
+                       size = excluded.size,
+                       avg_price = excluded.avg_price,
+                       current_price = excluded.current_price,
+                       category = excluded.category,
+                       token = excluded.token,
+                       token_id = excluded.token_id,
+                       is_paper = excluded.is_paper,
+                       updated_at = excluded.updated_at""",
+                (
+                    market_id,
+                    pos.side.value,
+                    pos.size,
+                    pos.avg_price,
+                    pos.current_price,
+                    category,
+                    token.value,
+                    token_id,
+                    now,
+                ),
+            )
+            positions.append(
+                LivePosition(
+                    market_id=market_id,
+                    token=token,
+                    token_id=token_id,
+                    size=pos.size,
+                    avg_cost=pos.avg_price,
+                    current_price=pos.current_price,
+                    category=category,
+                ),
+            )
+
+        # Remove portfolio rows for markets no longer held
+        if current_ids:
+            placeholders = ",".join("?" * len(current_ids))
+            await self._db.execute(
+                f"DELETE FROM portfolio WHERE exchange='kalshi' AND is_paper=1"
+                f" AND market_id NOT IN ({placeholders})",
+                tuple(current_ids),
+            )
+        else:
+            await self._db.execute(
+                "DELETE FROM portfolio WHERE exchange='kalshi' AND is_paper=1"
+            )
+
+        await self._db.commit()
+        log.info("sync.kalshi.paper.done", positions=len(positions))
         return positions
 
     async def get_cash_balance(self) -> float:
