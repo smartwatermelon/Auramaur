@@ -9,9 +9,9 @@ from config.settings import Settings
 def test_live_gates_present():
     s = Settings()
     # Verify the three-gate safety model exists
-    assert hasattr(s, 'auramaur_live')
-    assert hasattr(s, 'is_live')
-    assert hasattr(s.execution, 'live')
+    assert hasattr(s, "auramaur_live")
+    assert hasattr(s, "is_live")
+    assert hasattr(s.execution, "live")
 
 
 def test_all_gates_closed():
@@ -59,8 +59,10 @@ def test_default_risk_params():
 # API intensity presets
 # ---------------------------------------------------------------------------
 
+
 def test_intensity_medium_is_default():
     from config.settings import NLPConfig
+
     cfg = NLPConfig()
     assert cfg.api_intensity == "medium"
     assert cfg.skip_second_opinion is False
@@ -70,6 +72,7 @@ def test_intensity_medium_is_default():
 
 def test_intensity_low():
     from config.settings import NLPConfig
+
     cfg = NLPConfig(api_intensity="low")
     assert cfg.skip_second_opinion is True
     assert cfg.max_markets_per_cycle == 10
@@ -79,6 +82,7 @@ def test_intensity_low():
 
 def test_intensity_full_blast():
     from config.settings import NLPConfig
+
     cfg = NLPConfig(api_intensity="full_blast")
     assert cfg.skip_second_opinion is False
     assert cfg.max_markets_per_cycle == 50
@@ -89,6 +93,7 @@ def test_intensity_full_blast():
 def test_intensity_explicit_override_wins():
     """Explicit values should beat the preset."""
     from config.settings import NLPConfig
+
     cfg = NLPConfig(api_intensity="full_blast", max_markets_per_cycle=5)
     assert cfg.max_markets_per_cycle == 5  # explicit override
     assert cfg.evidence_per_source == 10  # from preset
@@ -100,6 +105,45 @@ def test_kalshi_config_defaults():
     assert s.kalshi.environment == "prod"
     assert s.kalshi.api_key == ""
     assert s.kalshi.private_key_path == ""
+
+
+def test_kalshi_private_key_materialised_to_tempfile():
+    """KALSHI_PRIVATE_KEY env var with PEM contents materialises to a
+    tempfile and sets kalshi_private_key_path to that path."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    s = Settings(kalshi_private_key=pem)
+    assert s.kalshi_private_key_path != ""
+    path = Path(s.kalshi_private_key_path)
+    assert path.exists()
+    assert path.read_text().strip() == pem.strip()
+    # Mode bits — file owner read/write, no group/other access
+    assert path.stat().st_mode & 0o077 == 0
+
+
+def test_kalshi_private_key_path_wins_when_both_set():
+    """If both PEM contents and explicit path are provided, path wins."""
+    s = Settings(
+        kalshi_private_key="this-would-fail-validation-if-used",
+        kalshi_private_key_path="/some/explicit/path.pem",
+    )
+    assert s.kalshi_private_key_path == "/some/explicit/path.pem"
+
+
+def test_kalshi_private_key_invalid_pem_raises():
+    """Junk in KALSHI_PRIVATE_KEY fails fast at Settings init, not later."""
+    import pytest
+
+    with pytest.raises(ValueError, match="does not parse as a PEM"):
+        Settings(kalshi_private_key="this is definitely not a PEM")
 
 
 def test_yaml_defaults_safe():
@@ -115,26 +159,28 @@ def test_yaml_defaults_safe():
     assert "live" in raw["execution"], "defaults.yaml must have execution.live"
 
     # confidence_floor must be LOW, MEDIUM, or HIGH
-    assert raw["risk"]["confidence_floor"] in ("LOW", "MEDIUM", "HIGH"), (
-        "defaults.yaml confidence_floor must be LOW, MEDIUM, or HIGH"
-    )
+    assert raw["risk"]["confidence_floor"] in (
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+    ), "defaults.yaml confidence_floor must be LOW, MEDIUM, or HIGH"
 
     # Hard ceilings — these must never be exceeded regardless of tuning
-    assert raw["risk"]["max_drawdown_pct"] <= 25.0, (
-        "defaults.yaml max_drawdown_pct must be <= 25%"
-    )
-    assert raw["risk"]["max_stake_per_market"] <= 100.0, (
-        "defaults.yaml max_stake_per_market must be <= $100"
-    )
-    assert raw["risk"]["daily_loss_limit"] <= 500.0, (
-        "defaults.yaml daily_loss_limit must be <= $500"
-    )
-    assert raw["risk"]["max_open_positions"] <= 1000, (
-        "defaults.yaml max_open_positions must be <= 1000"
-    )
-    assert raw["risk"]["category_exposure_cap_pct"] <= 80.0, (
-        "defaults.yaml category_exposure_cap_pct must be <= 80%"
-    )
-    assert raw["kelly"]["fraction"] <= 0.50, (
-        "defaults.yaml kelly fraction must be <= 50%"
-    )
+    assert (
+        raw["risk"]["max_drawdown_pct"] <= 25.0
+    ), "defaults.yaml max_drawdown_pct must be <= 25%"
+    assert (
+        raw["risk"]["max_stake_per_market"] <= 100.0
+    ), "defaults.yaml max_stake_per_market must be <= $100"
+    assert (
+        raw["risk"]["daily_loss_limit"] <= 500.0
+    ), "defaults.yaml daily_loss_limit must be <= $500"
+    assert (
+        raw["risk"]["max_open_positions"] <= 1000
+    ), "defaults.yaml max_open_positions must be <= 1000"
+    assert (
+        raw["risk"]["category_exposure_cap_pct"] <= 80.0
+    ), "defaults.yaml category_exposure_cap_pct must be <= 80%"
+    assert (
+        raw["kelly"]["fraction"] <= 0.50
+    ), "defaults.yaml kelly fraction must be <= 50%"
