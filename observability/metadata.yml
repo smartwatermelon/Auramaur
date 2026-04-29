@@ -1,0 +1,140 @@
+title: Auramaur Trading Dashboard
+description: Live view of paper/live trades, signals, and positions
+
+databases:
+  auramaur:
+    queries:
+      open_positions:
+        title: Open Positions
+        sql: >-
+          SELECT
+            market_id,
+            exchange,
+            token,
+            side,
+            ROUND(size, 2)          AS tokens,
+            ROUND(avg_price, 4)     AS avg_price,
+            ROUND(current_price, 4) AS current_price,
+            ROUND((current_price - avg_price) * size, 2) AS unrealized_pnl,
+            ROUND(size * current_price, 2)               AS market_value,
+            category,
+            is_paper,
+            updated_at
+          FROM portfolio
+          WHERE size > 0
+          ORDER BY ABS((current_price - avg_price) * size) DESC
+
+      recent_signals:
+        title: Recent Signals (last 50, by edge)
+        sql: >-
+          SELECT
+            datetime(timestamp, 'localtime') AS local_time,
+            market_id,
+            exchange,
+            ROUND(claude_prob * 100, 1)  AS claude_pct,
+            ROUND(market_prob * 100, 1)  AS market_pct,
+            ROUND(edge, 2)               AS edge_pct,
+            claude_confidence,
+            action,
+            ROUND(second_opinion_prob * 100, 1) AS second_opinion_pct,
+            ROUND(divergence, 3)                AS divergence
+          FROM signals
+          ORDER BY timestamp DESC
+          LIMIT 50
+
+      signals_by_category:
+        title: Signal Stats by Category (last 7 days)
+        sql: >-
+          SELECT
+            COALESCE(cat.category, 'unknown')    AS category,
+            COUNT(*)                             AS signals,
+            ROUND(AVG(ABS(s.edge)), 2)           AS avg_abs_edge,
+            ROUND(AVG(s.claude_prob * 100), 1)   AS avg_claude_pct,
+            SUM(CASE WHEN s.action='BUY' THEN 1 ELSE 0 END)  AS buys,
+            SUM(CASE WHEN s.action='SELL' THEN 1 ELSE 0 END) AS sells
+          FROM signals s
+          LEFT JOIN (
+            SELECT market_id, MAX(category) AS category
+            FROM portfolio
+            WHERE category IS NOT NULL
+            GROUP BY market_id
+          ) cat ON s.market_id = cat.market_id
+          WHERE s.timestamp >= datetime('now', '-7 days')
+          GROUP BY COALESCE(cat.category, 'unknown')
+          ORDER BY signals DESC
+
+      trade_history:
+        title: Trade History (paper)
+        sql: >-
+          SELECT
+            datetime(timestamp, 'localtime') AS local_time,
+            market_id,
+            exchange,
+            side,
+            ROUND(size, 2)         AS tokens,
+            ROUND(price, 4)        AS price,
+            ROUND(size * price, 2) AS cost_usd,
+            status,
+            order_id,
+            pnl
+          FROM trades
+          WHERE is_paper = 1
+          ORDER BY timestamp DESC
+          LIMIT 200
+
+      cumulative_cash_flow:
+        title: Cumulative Cash Flow (paper trades)
+        sql: >-
+          SELECT
+            datetime(timestamp, 'localtime') AS local_time,
+            market_id,
+            side,
+            ROUND(size, 2)         AS tokens,
+            ROUND(price, 4)        AS price,
+            ROUND(size * price, 2) AS trade_usd,
+            ROUND(
+              SUM(
+                CASE WHEN side = 'BUY'
+                  THEN -size * price
+                  ELSE  size * price
+                END
+              ) OVER (ORDER BY timestamp ROWS UNBOUNDED PRECEDING),
+              2
+            ) AS cumulative_cash_flow
+          FROM trades
+          WHERE is_paper = 1
+          ORDER BY timestamp
+
+      price_momentum:
+        title: Price Momentum (last 24 h, probability-point change)
+        sql: >-
+          WITH latest AS (
+            SELECT ph.market_id, ph.exchange, ph.price
+            FROM price_history ph
+            JOIN (
+              SELECT market_id, MAX(recorded_at) AS ts
+              FROM price_history
+              GROUP BY market_id
+            ) mx ON ph.market_id = mx.market_id AND ph.recorded_at = mx.ts
+          ),
+          oldest_in_window AS (
+            SELECT ph.market_id, ph.price
+            FROM price_history ph
+            JOIN (
+              SELECT market_id, MIN(recorded_at) AS ts
+              FROM price_history
+              WHERE recorded_at >= datetime('now', '-1 day')
+              GROUP BY market_id
+            ) mn ON ph.market_id = mn.market_id AND ph.recorded_at = mn.ts
+          )
+          SELECT
+            l.market_id,
+            l.exchange,
+            ROUND(o.price, 4)             AS price_24h_ago,
+            ROUND(l.price, 4)             AS price_now,
+            ROUND((l.price - o.price) * 100, 2) AS change_pp
+          FROM latest l
+          JOIN oldest_in_window o ON l.market_id = o.market_id
+          WHERE l.price != o.price
+          ORDER BY ABS(change_pp) DESC
+          LIMIT 50
