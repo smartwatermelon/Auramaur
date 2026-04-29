@@ -1,9 +1,58 @@
 """Tests for Kalshi exchange client."""
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
+from auramaur.broker.sync import KalshiPositionSyncer
 from auramaur.exchange.kalshi import KalshiClient
 from auramaur.exchange.models import Market, Order, OrderSide, TokenType
+
+
+class TestKalshiPositionSyncerBalance:
+    """KalshiPositionSyncer.get_cash_balance must return paper balance in paper mode."""
+
+    def _settings(self, is_live: bool):
+        s = MagicMock()
+        s.is_live = is_live
+        return s
+
+    @pytest.mark.asyncio
+    async def test_paper_mode_returns_paper_balance(self):
+        paper = MagicMock()
+        paper.balance = 111.0
+        syncer = KalshiPositionSyncer(
+            settings=self._settings(is_live=False),
+            db=MagicMock(),
+            exchange=MagicMock(),
+            paper=paper,
+        )
+        assert await syncer.get_cash_balance() == 111.0
+
+    @pytest.mark.asyncio
+    async def test_live_mode_queries_exchange(self):
+        exchange = MagicMock()
+        exchange.get_balance = AsyncMock(return_value=500.0)
+        syncer = KalshiPositionSyncer(
+            settings=self._settings(is_live=True),
+            db=MagicMock(),
+            exchange=exchange,
+            paper=MagicMock(),
+        )
+        assert await syncer.get_cash_balance() == 500.0
+        exchange.get_balance.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_paper_mode_without_paper_object_falls_back_to_exchange(self):
+        """Backwards-compat: if paper=None (old call site), fall back to exchange query."""
+        exchange = MagicMock()
+        exchange.get_balance = AsyncMock(return_value=42.0)
+        syncer = KalshiPositionSyncer(
+            settings=self._settings(is_live=False),
+            db=MagicMock(),
+            exchange=exchange,
+            paper=None,
+        )
+        assert await syncer.get_cash_balance() == 42.0
 
 
 class TestKalshiMarketParsing:
@@ -70,12 +119,14 @@ class TestKalshiPaperGate:
         from unittest.mock import AsyncMock, MagicMock
 
         paper = MagicMock()
-        paper.execute = AsyncMock(return_value=MagicMock(
-            order_id="PAPER-123",
-            market_id="KXTEST",
-            status="paper",
-            is_paper=True,
-        ))
+        paper.execute = AsyncMock(
+            return_value=MagicMock(
+                order_id="PAPER-123",
+                market_id="KXTEST",
+                status="paper",
+                is_paper=True,
+            )
+        )
 
         client = self._make_client()
         client._paper = paper
@@ -101,6 +152,7 @@ class TestKalshiPrepareOrderDirectSell:
         """Kalshi SELL signal should become BUY NO (can't sell what you don't own)."""
         client = KalshiClient.__new__(KalshiClient)
         from auramaur.exchange.models import Confidence, Signal
+
         signal = Signal(
             market_id="KXTEST",
             claude_prob=0.3,

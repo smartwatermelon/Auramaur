@@ -18,12 +18,16 @@ from auramaur.data_sources.websearch import WebSearchSource
 from auramaur.db.database import Database
 from auramaur.exchange.client import PolymarketClient
 from auramaur.exchange.gamma import GammaClient
-from auramaur.exchange.models import ExitReason, Order, OrderSide, OrderType, TokenType
+from auramaur.exchange.models import Order, OrderSide, OrderType, TokenType
 from auramaur.exchange.protocols import ExchangeClient, MarketDiscovery
 from auramaur.exchange.paper import PaperTrader
 from auramaur.monitoring.alerts import AlertManager
 from auramaur.monitoring.display import (
-    console, show_banner, show_error, show_portfolio, show_source_error, show_startup,
+    console,
+    show_banner,
+    show_error,
+    show_portfolio,
+    show_startup,
 )
 from auramaur.monitoring.logger import setup_logging
 from auramaur.nlp.analyzer import ClaudeAnalyzer
@@ -43,14 +47,21 @@ log = structlog.get_logger()
 class AuramaurBot:
     """Main bot orchestrator running concurrent async tasks."""
 
-    def __init__(self, settings: Settings | None = None, db_path: str | None = None, exchange_filter: str | None = None):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        db_path: str | None = None,
+        exchange_filter: str | None = None,
+    ):
         self.settings = settings or Settings()
         self._running = False
         self._components: dict = {}
         self._db_path = db_path
         self._exchange_filter = exchange_filter  # If set, only run this exchange
         self._lock_file = None  # File handle kept open for duration
-        self._rebalance_cooldowns: dict[str, float] = {}  # kept for reference, allocator handles concentration
+        self._rebalance_cooldowns: dict[str, float] = (
+            {}
+        )  # kept for reference, allocator handles concentration
         self._exit_failures: set[str] = set()  # Track failed exit sells to avoid spam
         # Track attempted cross-exchange arbs so the scanner doesn't re-execute
         # the same opportunity every 5-minute cycle. Maps arb-key -> expiry ts.
@@ -74,7 +85,9 @@ class AuramaurBot:
                 return self._db_path
             except OSError:
                 fh.close()
-                raise RuntimeError(f"Database {self._db_path} is already locked by another instance")
+                raise RuntimeError(
+                    f"Database {self._db_path} is already locked by another instance"
+                )
 
         # Auto-detect: try auramaur.db, auramaur_2.db, ...
         for i in range(1, 20):
@@ -109,11 +122,13 @@ class AuramaurBot:
             sources.append(NewsAPISource(api_key=s.newsapi_key))
             source_names.append("NewsAPI")
         if s.reddit_client_id:
-            sources.append(RedditSource(
-                client_id=s.reddit_client_id,
-                client_secret=s.reddit_client_secret,
-                user_agent=s.reddit_user_agent,
-            ))
+            sources.append(
+                RedditSource(
+                    client_id=s.reddit_client_id,
+                    client_secret=s.reddit_client_secret,
+                    user_agent=s.reddit_user_agent,
+                )
+            )
             source_names.append("Reddit")
         if s.twitter_bearer_token:
             sources.append(TwitterSource(bearer_token=s.twitter_bearer_token))
@@ -129,14 +144,17 @@ class AuramaurBot:
         # Structured data sources (no API keys needed)
         from auramaur.data_sources.market_data import MarketDataSource
         from auramaur.data_sources.polymarket_context import PolymarketContextSource
+
         sources.append(MarketDataSource())
         source_names.append("Markets")
         sources.append(PolymarketContextSource())
         source_names.append("PolyCtx")
         from auramaur.data_sources.metaculus import MetaculusSource
+
         sources.append(MetaculusSource())
         source_names.append("Metaculus")
         from auramaur.data_sources.manifold import ManifoldSource
+
         sources.append(ManifoldSource())
         source_names.append("Manifold")
 
@@ -146,6 +164,7 @@ class AuramaurBot:
         from auramaur.data_sources.coingecko import CoinGeckoSource
         from auramaur.data_sources.hackernews import HackerNewsSource
         from auramaur.data_sources.espn import ESPNSource
+
         sources.append(USGSSource())
         source_names.append("USGS")
         sources.append(CoinGeckoSource())
@@ -158,11 +177,13 @@ class AuramaurBot:
         # Category-agnostic broad news (fires on every query).
         from auramaur.data_sources.gdelt import GDELTSource
         from auramaur.data_sources.google_trends import GoogleTrendsSource
+
         sources.append(GDELTSource())
         source_names.append("GDELT")
         sources.append(GoogleTrendsSource())
         source_names.append("Trends")
         from auramaur.data_sources.bluesky import BlueskySource
+
         sources.append(BlueskySource())
         source_names.append("Bluesky")
 
@@ -175,9 +196,7 @@ class AuramaurBot:
         # NLP
         analyzer = ClaudeAnalyzer(settings=s)
         cache = NLPCache(db=db)
-        calibration = CalibrationTracker(
-            db=db, min_samples=s.calibration.min_samples
-        )
+        calibration = CalibrationTracker(db=db, min_samples=s.calibration.min_samples)
 
         # Risk
         risk_manager = RiskManager(settings=s, db=db)
@@ -186,6 +205,7 @@ class AuramaurBot:
         flow_tracker = None
         try:
             from auramaur.strategy.order_flow import OrderFlowTracker
+
             flow_tracker = OrderFlowTracker()
         except ImportError:
             log.warning("optional.missing", component="OrderFlowTracker")
@@ -199,10 +219,12 @@ class AuramaurBot:
 
         # Strategic analyzer for breadth (batch analysis with world model)
         from auramaur.nlp.strategic import StrategicAnalyzer
+
         strategic = StrategicAnalyzer(settings=s, db=db)
 
         # Depth agent for deep research on high-potential markets
         from auramaur.strategy.agent_analyzer import AgentAnalyzer
+
         depth_agent = AgentAnalyzer(settings=s, db=db, calibration=calibration)
 
         log.info("bot.analyzer_mode", mode="strategic+depth_agent")
@@ -229,17 +251,26 @@ class AuramaurBot:
             discoveries["polymarket"] = gamma
             exchanges_map["polymarket"] = exchange
 
-            syncer = PositionSyncer(settings=s, db=db, exchange=exchange, paper=paper, pnl=pnl_tracker)
+            syncer = PositionSyncer(
+                settings=s, db=db, exchange=exchange, paper=paper, pnl=pnl_tracker
+            )
             reconciler = PositionReconciler(exchange=exchange, db=db)
             router = SmartOrderRouter(settings=s, exchange=exchange)
             syncers.append(syncer)
 
             poly_engine = TradingEngine(
-                settings=s, db=db, discovery=gamma, aggregator=aggregator,
-                analyzer=analyzer, cache=cache, risk_manager=risk_manager,
-                exchange=exchange, calibration=calibration,
+                settings=s,
+                db=db,
+                discovery=gamma,
+                aggregator=aggregator,
+                analyzer=analyzer,
+                cache=cache,
+                risk_manager=risk_manager,
+                exchange=exchange,
+                calibration=calibration,
                 flow_tracker=flow_tracker,
-                router=router, allocator=allocator,
+                router=router,
+                allocator=allocator,
             )
             poly_engine._components_pnl = pnl_tracker
             poly_engine._components_syncer = syncer
@@ -249,23 +280,35 @@ class AuramaurBot:
             engines["polymarket"] = poly_engine
 
         # Kalshi (optional, guarded import) — same first-class wiring as Polymarket
-        if s.kalshi.enabled and (self._exchange_filter is None or self._exchange_filter == "kalshi"):
+        if s.kalshi.enabled and (
+            self._exchange_filter is None or self._exchange_filter == "kalshi"
+        ):
             try:
                 from auramaur.exchange.kalshi import KalshiClient
+
                 kalshi = KalshiClient(settings=s, paper_trader=paper)
                 discoveries["kalshi"] = kalshi
                 exchanges_map["kalshi"] = kalshi
 
-                kalshi_syncer = KalshiPositionSyncer(settings=s, db=db, exchange=kalshi)
+                kalshi_syncer = KalshiPositionSyncer(
+                    settings=s, db=db, exchange=kalshi, paper=paper
+                )
                 kalshi_router = SmartOrderRouter(settings=s, exchange=kalshi)
                 syncers.append(kalshi_syncer)
 
                 kalshi_engine = TradingEngine(
-                    settings=s, db=db, discovery=kalshi, aggregator=aggregator,
-                    analyzer=analyzer, cache=cache, risk_manager=risk_manager,
-                    exchange=kalshi, calibration=calibration,
+                    settings=s,
+                    db=db,
+                    discovery=kalshi,
+                    aggregator=aggregator,
+                    analyzer=analyzer,
+                    cache=cache,
+                    risk_manager=risk_manager,
+                    exchange=kalshi,
+                    calibration=calibration,
                     flow_tracker=flow_tracker,
-                    router=kalshi_router, allocator=allocator,
+                    router=kalshi_router,
+                    allocator=allocator,
                 )
                 kalshi_engine._components_pnl = pnl_tracker
                 kalshi_engine._components_syncer = kalshi_syncer
@@ -277,15 +320,24 @@ class AuramaurBot:
                 log.warning("optional.missing", component="KalshiClient")
 
         # Crypto.com (optional, works internationally)
-        if s.cryptodotcom.enabled and (self._exchange_filter is None or self._exchange_filter == "cryptodotcom"):
+        if s.cryptodotcom.enabled and (
+            self._exchange_filter is None or self._exchange_filter == "cryptodotcom"
+        ):
             try:
                 from auramaur.exchange.cryptodotcom import CryptoComClient
+
                 cryptodotcom = CryptoComClient(settings=s, paper_trader=paper)
                 discoveries["cryptodotcom"] = cryptodotcom
                 cdc_engine = TradingEngine(
-                    settings=s, db=db, discovery=cryptodotcom, aggregator=aggregator,
-                    analyzer=analyzer, cache=cache, risk_manager=risk_manager,
-                    exchange=cryptodotcom, calibration=calibration,
+                    settings=s,
+                    db=db,
+                    discovery=cryptodotcom,
+                    aggregator=aggregator,
+                    analyzer=analyzer,
+                    cache=cache,
+                    risk_manager=risk_manager,
+                    exchange=cryptodotcom,
+                    calibration=calibration,
                     flow_tracker=flow_tracker,
                     allocator=allocator,
                 )
@@ -296,15 +348,24 @@ class AuramaurBot:
                 log.warning("optional.missing", component="CryptoComClient")
 
         # Interactive Brokers (optional, guarded import)
-        if s.ibkr.enabled and (self._exchange_filter is None or self._exchange_filter == "ibkr"):
+        if s.ibkr.enabled and (
+            self._exchange_filter is None or self._exchange_filter == "ibkr"
+        ):
             try:
                 from auramaur.exchange.ibkr import IBKRClient
+
                 ibkr = IBKRClient(settings=s, paper_trader=paper)
                 discoveries["ibkr"] = ibkr
                 engines["ibkr"] = TradingEngine(
-                    settings=s, db=db, discovery=ibkr, aggregator=aggregator,
-                    analyzer=analyzer, cache=cache, risk_manager=risk_manager,
-                    exchange=ibkr, calibration=calibration,
+                    settings=s,
+                    db=db,
+                    discovery=ibkr,
+                    aggregator=aggregator,
+                    analyzer=analyzer,
+                    cache=cache,
+                    risk_manager=risk_manager,
+                    exchange=ibkr,
+                    calibration=calibration,
                     flow_tracker=flow_tracker,
                 )
             except ImportError:
@@ -329,7 +390,9 @@ class AuramaurBot:
         # on every configured exchange (Polymarket + Kalshi).
         news_reactor = None
         if engines and discoveries:
-            rss_source = next((s for s in sources if isinstance(s, RSSSource)), RSSSource())
+            rss_source = next(
+                (s for s in sources if isinstance(s, RSSSource)), RSSSource()
+            )
             news_reactor = NewsReactor(
                 rss_source=rss_source,
                 discoveries=discoveries,
@@ -341,6 +404,7 @@ class AuramaurBot:
         attributor = None
         try:
             from auramaur.monitoring.attribution import PerformanceAttributor
+
             attributor = PerformanceAttributor(db=db)
         except ImportError:
             log.warning("optional.missing", component="PerformanceAttributor")
@@ -349,6 +413,7 @@ class AuramaurBot:
         feedback = None
         try:
             from auramaur.broker.feedback import PerformanceFeedback
+
             feedback = PerformanceFeedback(db=db)
         except ImportError:
             log.warning("optional.missing", component="PerformanceFeedback")
@@ -359,10 +424,13 @@ class AuramaurBot:
         try:
             from auramaur.strategy.correlation import CorrelationDetector
             from auramaur.strategy.arbitrage import ArbitrageExecutor
+
             correlator = CorrelationDetector(db=db, model=s.nlp.model)
             arb_executor = ArbitrageExecutor(db=db, correlator=correlator)
         except ImportError:
-            log.warning("optional.missing", component="CorrelationDetector/ArbitrageExecutor")
+            log.warning(
+                "optional.missing", component="CorrelationDetector/ArbitrageExecutor"
+            )
 
         # WebSocket & Ensemble (optional — only if ensemble enabled)
         ws = None
@@ -370,11 +438,13 @@ class AuramaurBot:
         if s.ensemble.enabled:
             try:
                 from auramaur.exchange.websocket import PolymarketWebSocket
+
                 ws = PolymarketWebSocket()
             except ImportError:
                 log.warning("optional.missing", component="PolymarketWebSocket")
             try:
                 from auramaur.nlp.ensemble import EnsembleEstimator
+
                 ensemble = EnsembleEstimator(db=db)
             except ImportError:
                 log.warning("optional.missing", component="EnsembleEstimator")
@@ -398,29 +468,46 @@ class AuramaurBot:
 
         # Use first available discovery/exchange as primary (for portfolio monitor etc.)
         primary_discovery = gamma if gamma else next(iter(discoveries.values()), None)
-        primary_exchange = exchange if exchange else next(
-            (engines[k]._exchange for k in engines if hasattr(engines[k], '_exchange')), None  # type: ignore[attr-defined]
+        primary_exchange = (
+            exchange
+            if exchange
+            else next(
+                (engines[k]._exchange for k in engines if hasattr(engines[k], "_exchange")), None  # type: ignore[attr-defined]
+            )
         )
 
         self._components = {
-            "db": db, "aggregator": aggregator, "discovery": primary_discovery,
+            "db": db,
+            "aggregator": aggregator,
+            "discovery": primary_discovery,
             "discoveries": discoveries,
-            "paper": paper, "exchange": primary_exchange, "analyzer": analyzer,
+            "paper": paper,
+            "exchange": primary_exchange,
+            "analyzer": analyzer,
             "exchanges": exchanges_map,
-            "cache": cache, "calibration": calibration,
-            "risk_manager": risk_manager, "flow_tracker": flow_tracker,
-            "engines": engines, "news_reactor": news_reactor,
-            "pnl_tracker": pnl_tracker, "syncer": syncer, "syncers": syncers,
+            "cache": cache,
+            "calibration": calibration,
+            "risk_manager": risk_manager,
+            "flow_tracker": flow_tracker,
+            "engines": engines,
+            "news_reactor": news_reactor,
+            "pnl_tracker": pnl_tracker,
+            "syncer": syncer,
+            "syncers": syncers,
             "reconciler": reconciler,
-            "router": router, "allocator": allocator,
-            "attributor": attributor, "feedback": feedback,
-            "correlator": correlator, "arb_executor": arb_executor,
+            "router": router,
+            "allocator": allocator,
+            "attributor": attributor,
+            "feedback": feedback,
+            "correlator": correlator,
+            "arb_executor": arb_executor,
             "arb_scanner": arb_scanner,
             "resolution_tracker": resolution_tracker,
             "depth_agent": depth_agent,
             "market_maker": market_maker,
             "alerts": alerts,
-            "websocket": ws, "ensemble": ensemble,
+            "websocket": ws,
+            "ensemble": ensemble,
             "source_names": source_names,
             "exchange_filter": self._exchange_filter,
         }
@@ -470,7 +557,7 @@ class AuramaurBot:
     def _is_cash_starved(self) -> bool:
         """Check if both exchanges are too low on cash to open new positions."""
         # Default to starved (0) until portfolio monitor sets the real value
-        cash = getattr(self, '_last_known_cash', 0.0)
+        cash = getattr(self, "_last_known_cash", 0.0)
         return cash < 5.0
 
     async def _check_kill_switch(self) -> bool:
@@ -479,7 +566,9 @@ class AuramaurBot:
             self._running = False
             alerts = self._components.get("alerts")
             if alerts:
-                await alerts.send("KILL SWITCH ACTIVATED — bot halted", level="critical")
+                await alerts.send(
+                    "KILL SWITCH ACTIVATED — bot halted", level="critical"
+                )
             return True
         return False
 
@@ -492,14 +581,16 @@ class AuramaurBot:
                 await engine.scan_and_store_markets()
             except Exception as e:
                 show_error(f"Market scan failed ({name}): {e}")
-            await asyncio.sleep(self._adaptive_interval(self.settings.intervals.market_scan_seconds))
+            await asyncio.sleep(
+                self._adaptive_interval(self.settings.intervals.market_scan_seconds)
+            )
 
     async def _task_trading_cycle(self, engine: TradingEngine, name: str = "") -> None:
         """Periodically run trading analysis cycle."""
         # Wait for the portfolio monitor to set _last_known_cash before the
         # first cycle, otherwise we default to 0 and enter starved mode.
         for _ in range(15):
-            if getattr(self, '_last_known_cash', 0.0) > 0:
+            if getattr(self, "_last_known_cash", 0.0) > 0:
                 break
             await asyncio.sleep(2)
 
@@ -508,7 +599,7 @@ class AuramaurBot:
                 return
 
             try:
-                cash = getattr(self, '_last_known_cash', 0.0)
+                cash = getattr(self, "_last_known_cash", 0.0)
                 await engine.run_cycle(cash_available=cash)
             except Exception as e:
                 show_error(f"Trading cycle failed ({name}): {e}")
@@ -522,7 +613,9 @@ class AuramaurBot:
                 except Exception as e:
                     log.debug("kalshi_rebalance.error", error=str(e))
 
-            await asyncio.sleep(self._adaptive_interval(self.settings.intervals.analysis_seconds))
+            await asyncio.sleep(
+                self._adaptive_interval(self.settings.intervals.analysis_seconds)
+            )
 
     async def _task_portfolio_monitor(self) -> None:
         """Monitor portfolio using the broker syncers for ground truth.
@@ -554,7 +647,9 @@ class AuramaurBot:
                         positions_list = await syncer.sync()
                         cash = await syncer.get_cash_balance()
                     except Exception as e:
-                        log.debug("portfolio_monitor.sync_error", exchange=name, error=str(e))
+                        log.debug(
+                            "portfolio_monitor.sync_error", exchange=name, error=str(e)
+                        )
                         continue
 
                     per_exchange_cash[name] = cash
@@ -565,16 +660,27 @@ class AuramaurBot:
                         if self.settings.is_live and reconciler_comp:
                             try:
                                 reconciled = await reconciler_comp.reconcile()
-                                repaired = await reconciler_comp.repair_orphaned_ids(reconciled)
+                                repaired = await reconciler_comp.repair_orphaned_ids(
+                                    reconciled
+                                )
                                 if repaired:
                                     positions_list = await syncer.sync()
-                                live_from_recon = reconciler_comp.to_live_positions(reconciled)
+                                live_from_recon = reconciler_comp.to_live_positions(
+                                    reconciled
+                                )
                                 known_ids = {p.market_id for p in positions_list}
-                                new_positions = [p for p in live_from_recon if p.market_id not in known_ids]
+                                new_positions = [
+                                    p
+                                    for p in live_from_recon
+                                    if p.market_id not in known_ids
+                                ]
                                 if new_positions:
                                     await syncer._merge_new_positions(new_positions)
                                     positions_list.extend(new_positions)
-                                    log.info("reconciler.new_positions_merged", count=len(new_positions))
+                                    log.info(
+                                        "reconciler.new_positions_merged",
+                                        count=len(new_positions),
+                                    )
                             except Exception as e:
                                 log.debug("reconciler.enrich_error", error=str(e))
 
@@ -584,7 +690,13 @@ class AuramaurBot:
                 self._last_known_cash = total_cash
                 total_pnl = await pnl_tracker.get_total_pnl(all_positions)
                 poly_cash = per_exchange_cash.get("polymarket", total_cash)
-                show_portfolio(poly_cash, total_pnl, len(all_positions), 0.0, schedule_mode=self._get_schedule_mode())
+                show_portfolio(
+                    poly_cash,
+                    total_pnl,
+                    len(all_positions),
+                    0.0,
+                    schedule_mode=self._get_schedule_mode(),
+                )
 
                 # Per-exchange exit checks + execution
                 for name, discovery in discoveries.items():
@@ -593,7 +705,9 @@ class AuramaurBot:
                         continue
                     try:
                         exit_list = await portfolio_tracker.check_exits(
-                            self.settings, discovery, exchange=name,
+                            self.settings,
+                            discovery,
+                            exchange=name,
                         )
                     except Exception as e:
                         log.debug("exit_check.error", exchange=name, error=str(e))
@@ -612,13 +726,22 @@ class AuramaurBot:
                         )
                         try:
                             if name == "polymarket":
-                                ok = await self._execute_poly_exit(pos, reason, discovery, exchange_client, alerts)
+                                ok = await self._execute_poly_exit(
+                                    pos, reason, discovery, exchange_client, alerts
+                                )
                             elif name == "kalshi":
-                                ok = await self._execute_kalshi_exit(pos, reason, discovery, exchange_client, alerts)
+                                ok = await self._execute_kalshi_exit(
+                                    pos, reason, discovery, exchange_client, alerts
+                                )
                             else:
                                 ok = False
                         except Exception as e:
-                            log.warning("exit.execute_error", exchange=name, market_id=pos.market_id, error=str(e))
+                            log.warning(
+                                "exit.execute_error",
+                                exchange=name,
+                                market_id=pos.market_id,
+                                error=str(e),
+                            )
                             ok = False
                         if not ok:
                             self._exit_failures.add(fail_key)
@@ -647,8 +770,11 @@ class AuramaurBot:
                 for rp in await reconciler_comp.reconcile():
                     if rp.market_id == pos.market_id or rp.question == pos.market_id:
                         token_id = rp.token_id
-                        log.info("exit.token_from_reconciler",
-                                 market_id=pos.market_id, token_id=token_id[:20])
+                        log.info(
+                            "exit.token_from_reconciler",
+                            market_id=pos.market_id,
+                            token_id=token_id[:20],
+                        )
                         break
             except Exception as e:
                 log.debug("exit.reconciler_error", error=str(e))
@@ -687,6 +813,7 @@ class AuramaurBot:
         sell_size = pos.size
         try:
             from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+
             exchange._init_clob_client()
             bal = exchange._clob_client.get_balance_allowance(
                 BalanceAllowanceParams(
@@ -697,9 +824,12 @@ class AuramaurBot:
             )
             onchain = int(bal.get("balance", 0)) / 1e6
             if onchain < sell_size:
-                log.info("exit.size_adjusted",
-                         market_id=pos.market_id,
-                         db_size=sell_size, onchain=onchain)
+                log.info(
+                    "exit.size_adjusted",
+                    market_id=pos.market_id,
+                    db_size=sell_size,
+                    onchain=onchain,
+                )
                 sell_size = onchain
         except Exception as e:
             log.debug("exit.balance_check_error", error=str(e))
@@ -708,7 +838,9 @@ class AuramaurBot:
             log.debug("exit.too_small", market_id=pos.market_id, size=sell_size)
             return False
         if pos.current_price < 0.01:
-            log.debug("exit.near_zero", market_id=pos.market_id, price=pos.current_price)
+            log.debug(
+                "exit.near_zero", market_id=pos.market_id, price=pos.current_price
+            )
             return False
 
         sell_price = max(0.01, min(0.99, round(pos.current_price, 2)))
@@ -747,7 +879,7 @@ class AuramaurBot:
         SELL signal with ``exit_token`` set and let the exchange's
         ``prepare_order`` do the rest.
         """
-        from auramaur.exchange.models import Confidence, Market, Signal
+        from auramaur.exchange.models import Confidence, Signal
 
         market = await discovery.get_market(pos.market_id)
         if market is None:
@@ -768,7 +900,9 @@ class AuramaurBot:
 
         # Notional to feed into prepare_order sizing
         notional = pos.size * max(pos.current_price, 0.01)
-        order = exchange.prepare_order(exit_signal, market, notional, self.settings.is_live)
+        order = exchange.prepare_order(
+            exit_signal, market, notional, self.settings.is_live
+        )
         if order is None:
             return False
 
@@ -779,9 +913,16 @@ class AuramaurBot:
 
         result = await exchange.place_order(order)
         from auramaur.monitoring.display import show_order
+
         show_order(
-            result.status, result.order_id, "SELL", order.size, order.price,
-            result.is_paper, exchange="kalshi", error_message=result.error_message,
+            result.status,
+            result.order_id,
+            "SELL",
+            order.size,
+            order.price,
+            result.is_paper,
+            exchange="kalshi",
+            error_message=result.error_message,
         )
         if result.status == "rejected":
             return False
@@ -812,7 +953,8 @@ class AuramaurBot:
         knows to hit 'Redeem All' in the Polymarket UI. Runs hourly.
         """
         from auramaur.broker.redeemer import (
-            fetch_redeemable_positions, summarize_redemptions,
+            fetch_redeemable_positions,
+            summarize_redemptions,
         )
         from auramaur.monitoring.display import console
 
@@ -829,11 +971,13 @@ class AuramaurBot:
                 summary = summarize_redemptions(positions)
                 payout = summary["payout_now_usdc"]
 
-                if summary["redeemable_now"] > 0 and payout > 0 and payout != last_notified_payout:
+                if (
+                    summary["redeemable_now"] > 0
+                    and payout > 0
+                    and payout != last_notified_payout
+                ):
                     console.print()
-                    console.print(
-                        f"[bold green]╔══ REDEMPTION AVAILABLE ══╗[/]"
-                    )
+                    console.print("[bold green]╔══ REDEMPTION AVAILABLE ══╗[/]")
                     console.print(
                         f"[bold green]║[/] [green]${payout:.2f} USDC[/] ready to "
                         f"redeem on Polymarket — {summary['winning_now']} winning "
@@ -841,12 +985,10 @@ class AuramaurBot:
                         f"(net [green]${summary['net_pnl_now']:+.2f}[/])"
                     )
                     console.print(
-                        f"[bold green]║[/] [dim]→ https://polymarket.com/portfolio  "
-                        f"or run:[/] [cyan]auramaur redeem-check[/]"
+                        "[bold green]║[/] [dim]→ https://polymarket.com/portfolio  "
+                        "or run:[/] [cyan]auramaur redeem-check[/]"
                     )
-                    console.print(
-                        f"[bold green]╚══════════════════════════╝[/]"
-                    )
+                    console.print("[bold green]╚══════════════════════════╝[/]")
                     console.print()
                     last_notified_payout = payout
             except Exception as e:
@@ -885,6 +1027,7 @@ class AuramaurBot:
                 stats = await attributor.get_category_stats()
                 if stats:
                     from auramaur.monitoring.display import show_category_performance
+
                     show_category_performance(stats)
             except Exception as e:
                 log.error("attribution.error", error=str(e))
@@ -932,14 +1075,22 @@ class AuramaurBot:
                     for buy_signal, sell_signal, opp in pairs:
                         try:
                             # Load markets for risk evaluation
-                            buy_market = await arb_executor._load_market(buy_signal.market_id)
-                            sell_market = await arb_executor._load_market(sell_signal.market_id)
+                            buy_market = await arb_executor._load_market(
+                                buy_signal.market_id
+                            )
+                            sell_market = await arb_executor._load_market(
+                                sell_signal.market_id
+                            )
                             if not buy_market or not sell_market:
                                 continue
 
                             # Run risk checks on both legs
-                            buy_decision = await risk_manager.evaluate(buy_signal, buy_market)
-                            sell_decision = await risk_manager.evaluate(sell_signal, sell_market)
+                            buy_decision = await risk_manager.evaluate(
+                                buy_signal, buy_market
+                            )
+                            sell_decision = await risk_manager.evaluate(
+                                sell_signal, sell_market
+                            )
 
                             if buy_decision.approved and sell_decision.approved:
                                 log.info(
@@ -1016,6 +1167,7 @@ class AuramaurBot:
 
                     # Build market from DB + enrich from Gamma
                     from auramaur.exchange.models import Market
+
                     market = Market(
                         id=row["market_id"],
                         question=row["question"] or "",
@@ -1030,7 +1182,10 @@ class AuramaurBot:
                         end_str = row["end_date"]
                         if end_str:
                             from datetime import datetime
-                            market.end_date = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+
+                            market.end_date = datetime.fromisoformat(
+                                end_str.replace("Z", "+00:00")
+                            )
                     except Exception:
                         pass
                     # Enrich with Gamma data for CLOB tokens
@@ -1041,7 +1196,9 @@ class AuramaurBot:
                             market.clob_token_yes = full_market.clob_token_yes
                             market.clob_token_no = full_market.clob_token_no
                             market.condition_id = full_market.condition_id
-                            if full_market.description and len(full_market.description) > len(market.description):
+                            if full_market.description and len(
+                                full_market.description
+                            ) > len(market.description):
                                 market.description = full_market.description
                     except Exception:
                         pass
@@ -1056,7 +1213,7 @@ class AuramaurBot:
                     candidate = await depth_agent.deep_research(market)
                     if candidate:
                         # Run through risk checks and execution
-                        from auramaur.strategy.protocols import TradeCandidate
+
                         results = await engine._execute_candidates([candidate])
                         trades = [r for r in results if r.get("order")]
                         if trades:
@@ -1117,8 +1274,13 @@ class AuramaurBot:
                     # Auto-execute internal arbs (YES+NO < 0.97) if risk checks pass
                     if opp.arb_type == "internal":
                         await self._execute_internal_arb(opp, risk_manager, engines)
-                    elif opp.arb_type == "cross_exchange" and self.settings.arbitrage.cross_exchange_auto_execute:
-                        await self._execute_cross_exchange_arb(opp, risk_manager, engines)
+                    elif (
+                        opp.arb_type == "cross_exchange"
+                        and self.settings.arbitrage.cross_exchange_auto_execute
+                    ):
+                        await self._execute_cross_exchange_arb(
+                            opp, risk_manager, engines
+                        )
 
             except Exception as e:
                 log.error("arb_scanner.task_error", error=str(e))
@@ -1198,7 +1360,11 @@ class AuramaurBot:
             exchange=exchange_name,
             token_id=market.clob_token_yes or market.id,
             side=OrderSide.BUY,
-            size=position_size / market.outcome_yes_price if market.outcome_yes_price > 0 else 0,
+            size=(
+                position_size / market.outcome_yes_price
+                if market.outcome_yes_price > 0
+                else 0
+            ),
             price=market.outcome_yes_price,
             dry_run=not self.settings.is_live,
         )
@@ -1209,7 +1375,11 @@ class AuramaurBot:
             exchange=exchange_name,
             token_id=market.clob_token_no or market.id,
             side=OrderSide.BUY,
-            size=position_size / market.outcome_no_price if market.outcome_no_price > 0 else 0,
+            size=(
+                position_size / market.outcome_no_price
+                if market.outcome_no_price > 0
+                else 0
+            ),
             price=market.outcome_no_price,
             dry_run=not self.settings.is_live,
         )
@@ -1339,8 +1509,12 @@ class AuramaurBot:
         expensive_client = engine_expensive.exchange
         is_live = self.settings.is_live
 
-        yes_order = cheap_client.prepare_order(yes_signal, cheap_market, position_size, is_live)
-        no_order = expensive_client.prepare_order(no_signal, expensive_market, position_size, is_live)
+        yes_order = cheap_client.prepare_order(
+            yes_signal, cheap_market, position_size, is_live
+        )
+        no_order = expensive_client.prepare_order(
+            no_signal, expensive_market, position_size, is_live
+        )
         if yes_order is None or no_order is None:
             log.debug(
                 "arb_scanner.cross_prepare_failed",
@@ -1353,6 +1527,7 @@ class AuramaurBot:
         # Dedup: 1-hour cooldown per (question, exchange-pair). Set before
         # placement so concurrent scans don't double-fire on the same arb.
         import time as _time
+
         arb_key = f"{opp.question[:80]}|{cheap_exchange}|{expensive_exchange}"
         now_ts = _time.monotonic()
         expiry = self._arb_attempts.get(arb_key)
@@ -1394,10 +1569,18 @@ class AuramaurBot:
                 # "unknown"/"ERROR" are sentinel IDs the exchange clients
                 # return when they couldn't parse a real order_id — cancel
                 # would no-op. Skip straight to the critical alert path.
-                real_id = rollback_result.order_id not in ("", "unknown", "ERROR", "BLOCKED", "SKIP_DUP")
+                real_id = rollback_result.order_id not in (
+                    "",
+                    "unknown",
+                    "ERROR",
+                    "BLOCKED",
+                    "SKIP_DUP",
+                )
                 if real_id:
                     try:
-                        cancelled = bool(await rollback_client.cancel_order(rollback_result.order_id))
+                        cancelled = bool(
+                            await rollback_client.cancel_order(rollback_result.order_id)
+                        )
                     except Exception as e:
                         log.error(
                             "arb_scanner.cross_rollback_failed",
@@ -1453,7 +1636,7 @@ class AuramaurBot:
         """
         from auramaur.exchange.models import Confidence, Signal, TokenType as TT
 
-        MAX_EVENT_PCT = 0.30   # trigger rebalance above 30%
+        MAX_EVENT_PCT = 0.30  # trigger rebalance above 30%
         TARGET_EVENT_PCT = 0.20  # trim down to 20%
 
         db = engine.db
@@ -1484,10 +1667,16 @@ class AuramaurBot:
             else:
                 event_key = mid
 
-            events.setdefault(event_key, []).append({
-                "row": r, "exposure": exposure, "mid": mid,
-                "token": token, "size": size, "price": price,
-            })
+            events.setdefault(event_key, []).append(
+                {
+                    "row": r,
+                    "exposure": exposure,
+                    "mid": mid,
+                    "token": token,
+                    "size": size,
+                    "price": price,
+                }
+            )
             total_exposure += exposure
 
         if total_exposure <= 0:
@@ -1513,6 +1702,7 @@ class AuramaurBot:
                 excess=round(excess, 2),
             )
             from datetime import datetime, timezone
+
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             console.print(
                 f"[dim]{ts}[/] [bold yellow]REBALANCE[/] {event_key} "
@@ -1555,6 +1745,7 @@ class AuramaurBot:
                 )
 
                 from auramaur.exchange.models import Market
+
                 market = Market(
                     id=pos["mid"],
                     exchange="kalshi",
@@ -1566,7 +1757,10 @@ class AuramaurBot:
                 )
 
                 order = engine.exchange.prepare_order(
-                    exit_signal, market, contracts_to_sell * price, self.settings.is_live,
+                    exit_signal,
+                    market,
+                    contracts_to_sell * price,
+                    self.settings.is_live,
                 )
                 if order is None:
                     continue
@@ -1577,9 +1771,15 @@ class AuramaurBot:
 
                 result = await engine.exchange.place_order(order)
                 from auramaur.monitoring.display import show_order
+
                 show_order(
-                    result.status, result.order_id, "SELL", order.size,
-                    order.price, result.is_paper, exchange="kalshi",
+                    result.status,
+                    result.order_id,
+                    "SELL",
+                    order.size,
+                    order.price,
+                    result.is_paper,
+                    exchange="kalshi",
                     error_message=result.error_message,
                 )
 
@@ -1702,9 +1902,14 @@ class AuramaurBot:
         flow_tracker = self._components.get("flow_tracker")
 
         if flow_tracker is not None:
+
             async def on_trade(market_id: str, side: str, size: float) -> None:
                 try:
-                    order_side = OrderSide.BUY if side.upper() in ("BUY", "B", "1") else OrderSide.SELL
+                    order_side = (
+                        OrderSide.BUY
+                        if side.upper() in ("BUY", "B", "1")
+                        else OrderSide.SELL
+                    )
                     flow_tracker.record_trade(market_id, order_side, size)
                 except Exception:
                     pass
@@ -1736,12 +1941,10 @@ class AuramaurBot:
     async def _task_position_sync(self) -> None:
         """Periodically sync positions from CLOB trade history (ground truth)."""
         from auramaur.broker.reconciler import PositionReconciler
-        from auramaur.broker.pnl import PnLTracker
         from auramaur.broker.sync import PositionSyncer
 
         reconciler: PositionReconciler = self._components["reconciler"]
         syncer: PositionSyncer = self._components["syncer"]
-        pnl: PnLTracker = self._components["pnl_tracker"]
         interval = self.settings.broker.sync_interval_seconds
 
         while self._running:
@@ -1762,8 +1965,14 @@ class AuramaurBot:
                                    avg_cost = excluded.avg_cost,
                                    total_cost = excluded.total_cost,
                                    updated_at = excluded.updated_at""",
-                            (rp.market_id, rp.outcome, rp.token_id, rp.size,
-                             rp.avg_cost, rp.size * rp.avg_cost),
+                            (
+                                rp.market_id,
+                                rp.outcome,
+                                rp.token_id,
+                                rp.size,
+                                rp.avg_cost,
+                                rp.size * rp.avg_cost,
+                            ),
                         )
 
                     # Delete stale rows from cost_basis AND portfolio: positions no
@@ -1785,8 +1994,12 @@ class AuramaurBot:
                         )
                         log.info(
                             "reconciler.stale_removed",
-                            cost_basis=cb_cur.rowcount if hasattr(cb_cur, "rowcount") else 0,
-                            portfolio=pf_cur.rowcount if hasattr(pf_cur, "rowcount") else 0,
+                            cost_basis=(
+                                cb_cur.rowcount if hasattr(cb_cur, "rowcount") else 0
+                            ),
+                            portfolio=(
+                                pf_cur.rowcount if hasattr(pf_cur, "rowcount") else 0
+                            ),
                         )
 
                     await self._components["db"].commit()
@@ -1856,7 +2069,12 @@ class AuramaurBot:
                 for order_id in list(exchange._live_pending.keys()):
                     try:
                         result = await exchange.get_order_status(order_id)
-                        if result.status in ("filled", "cancelled", "expired", "rejected"):
+                        if result.status in (
+                            "filled",
+                            "cancelled",
+                            "expired",
+                            "rejected",
+                        ):
                             exchange._live_pending.pop(order_id, None)
                             log.info(
                                 "order_monitor.live_terminal",
@@ -1865,7 +2083,11 @@ class AuramaurBot:
                                 filled_size=result.filled_size,
                             )
                     except Exception as e:
-                        log.debug("order_monitor.live_poll_error", order_id=order_id, error=str(e))
+                        log.debug(
+                            "order_monitor.live_poll_error",
+                            order_id=order_id,
+                            error=str(e),
+                        )
             except Exception as e:
                 log.debug("order_monitor.error", error=str(e))
             await asyncio.sleep(30)
@@ -1885,6 +2107,7 @@ class AuramaurBot:
                 resolved = await tracker.check_resolutions()
                 if resolved > 0:
                     from datetime import datetime, timezone
+
                     now_str = datetime.now(timezone.utc).strftime("%H:%M:%S")
                     console.print(
                         f"  [dim]{now_str}[/] [bold green]RESOLVED[/] {resolved} market(s) — calibration updated"
@@ -1892,7 +2115,6 @@ class AuramaurBot:
                     # Also feed into attribution if available
                     attributor = self._components.get("attributor")
                     if attributor is not None:
-                        db: Database = self._components["db"]
                         # Attribution is handled inside _settle_position via
                         # daily_stats; log for visibility only.
                         log.info("resolution.attribution_notified", count=resolved)
@@ -1922,7 +2144,9 @@ class AuramaurBot:
         # Show real balance — use reconciler for live, paper for paper mode.
         # In live mode we never fall back to paper.balance — that would show
         # paper PnL in a live banner if the reconciler fails to respond.
-        startup_balance = 0.0 if self.settings.is_live else self._components["paper"].balance
+        startup_balance = (
+            0.0 if self.settings.is_live else self._components["paper"].balance
+        )
         if self.settings.is_live:
             try:
                 total_cash = 0.0
@@ -1930,13 +2154,20 @@ class AuramaurBot:
                 total_markets = 0
 
                 # Polymarket balance
-                if self._exchange_filter is None or self._exchange_filter == "polymarket":
+                if (
+                    self._exchange_filter is None
+                    or self._exchange_filter == "polymarket"
+                ):
                     reconciler_comp = self._components.get("reconciler")
                     if reconciler_comp:
                         reconciled = await reconciler_comp.reconcile()
-                        position_value = sum(p.size * p.current_price for p in reconciled)
+                        position_value = sum(
+                            p.size * p.current_price for p in reconciled
+                        )
                         syncer_comp = self._components.get("syncer")
-                        poly_cash = await syncer_comp.get_cash_balance() if syncer_comp else 0
+                        poly_cash = (
+                            await syncer_comp.get_cash_balance() if syncer_comp else 0
+                        )
                         total_cash += poly_cash
                         total_position_value += position_value
                         total_markets += len(reconciled)
@@ -1973,51 +2204,93 @@ class AuramaurBot:
             asyncio.create_task(self._task_recalibrate(), name="recalibrate"),
         ]
 
-        # Portfolio monitor and position sync need syncer (Polymarket-specific)
+        # Portfolio monitor starts if any syncer is available (Polymarket or Kalshi).
+        # position_sync is Polymarket-specific (uses the poly syncer for fills/reconciler).
+        if self._components.get("syncers"):
+            tasks.append(
+                asyncio.create_task(self._task_portfolio_monitor(), name="portfolio")
+            )
         if self._components.get("syncer"):
-            tasks.append(asyncio.create_task(self._task_portfolio_monitor(), name="portfolio"))
-            tasks.append(asyncio.create_task(self._task_position_sync(), name="position_sync"))
+            tasks.append(
+                asyncio.create_task(self._task_position_sync(), name="position_sync")
+            )
 
         # Resolution checker and order monitor work with any exchange
-        tasks.append(asyncio.create_task(self._task_resolution_checker(), name="resolution_checker"))
-        tasks.append(asyncio.create_task(self._task_order_monitor(), name="order_monitor"))
+        tasks.append(
+            asyncio.create_task(
+                self._task_resolution_checker(), name="resolution_checker"
+            )
+        )
+        tasks.append(
+            asyncio.create_task(self._task_order_monitor(), name="order_monitor")
+        )
 
         # Redemption check — only meaningful with a Polymarket proxy wallet
         if self.settings.polymarket_proxy_address:
-            tasks.append(asyncio.create_task(self._task_redemption_check(), name="redemption_check"))
+            tasks.append(
+                asyncio.create_task(
+                    self._task_redemption_check(), name="redemption_check"
+                )
+            )
 
         # News reactor (if available)
         if self._components.get("news_reactor"):
-            tasks.append(asyncio.create_task(self._task_news_reactor(), name="news_reactor"))
+            tasks.append(
+                asyncio.create_task(self._task_news_reactor(), name="news_reactor")
+            )
 
         # Per-exchange scan + trade tasks
         engines: dict[str, TradingEngine] = self._components["engines"]
         for ex_name, engine in engines.items():
-            tasks.append(asyncio.create_task(
-                self._task_market_scan(engine, ex_name), name=f"scan_{ex_name}",
-            ))
-            tasks.append(asyncio.create_task(
-                self._task_trading_cycle(engine, ex_name), name=f"trade_{ex_name}",
-            ))
+            tasks.append(
+                asyncio.create_task(
+                    self._task_market_scan(engine, ex_name),
+                    name=f"scan_{ex_name}",
+                )
+            )
+            tasks.append(
+                asyncio.create_task(
+                    self._task_trading_cycle(engine, ex_name),
+                    name=f"trade_{ex_name}",
+                )
+            )
 
         if self._components.get("attributor"):
-            tasks.append(asyncio.create_task(self._task_attribution_update(), name="attribution"))
+            tasks.append(
+                asyncio.create_task(self._task_attribution_update(), name="attribution")
+            )
         if self._components.get("correlator"):
-            tasks.append(asyncio.create_task(self._task_correlation_scan(), name="correlation"))
+            tasks.append(
+                asyncio.create_task(self._task_correlation_scan(), name="correlation")
+            )
         if self._components.get("websocket"):
-            tasks.append(asyncio.create_task(self._task_price_monitor(), name="price_monitor"))
+            tasks.append(
+                asyncio.create_task(self._task_price_monitor(), name="price_monitor")
+            )
         if self._components.get("ensemble"):
-            tasks.append(asyncio.create_task(self._task_source_weights_update(), name="source_weights"))
+            tasks.append(
+                asyncio.create_task(
+                    self._task_source_weights_update(), name="source_weights"
+                )
+            )
         if self._components.get("feedback"):
-            tasks.append(asyncio.create_task(self._task_performance_feedback(), name="performance_feedback"))
+            tasks.append(
+                asyncio.create_task(
+                    self._task_performance_feedback(), name="performance_feedback"
+                )
+            )
 
         # Arb scanner always runs (handles single-exchange gracefully)
         tasks.append(asyncio.create_task(self._task_arb_scanner(), name="arb_scanner"))
-        tasks.append(asyncio.create_task(self._task_depth_research(), name="depth_research"))
+        tasks.append(
+            asyncio.create_task(self._task_depth_research(), name="depth_research")
+        )
 
         # Market maker (if enabled)
         if self._components.get("market_maker"):
-            tasks.append(asyncio.create_task(self._task_market_maker(), name="market_maker"))
+            tasks.append(
+                asyncio.create_task(self._task_market_maker(), name="market_maker")
+            )
 
         try:
             await asyncio.gather(*tasks)
@@ -2045,6 +2318,7 @@ class AuramaurBot:
         # Release database lock
         if self._lock_file is not None:
             import fcntl
+
             try:
                 fcntl.flock(self._lock_file, fcntl.LOCK_UN)
                 self._lock_file.close()

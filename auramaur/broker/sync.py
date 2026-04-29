@@ -113,13 +113,21 @@ class PositionSyncer:
             for row in rows:
                 market_id = row["market_id"]
                 raw_token = (row["token"] or "YES").upper()
-                token = TokenType(raw_token) if raw_token in ("YES", "NO") else TokenType.YES
+                token = (
+                    TokenType(raw_token)
+                    if raw_token in ("YES", "NO")
+                    else TokenType.YES
+                )
 
                 # Use the correct price for the token we hold
                 yes_price = float(row["outcome_yes_price"] or 0)
                 no_price = float(row["outcome_no_price"] or 0)
                 if token == TokenType.NO:
-                    current_price = no_price if no_price > 0.01 else (1.0 - yes_price) if yes_price > 0 else 0.0
+                    current_price = (
+                        no_price
+                        if no_price > 0.01
+                        else (1.0 - yes_price) if yes_price > 0 else 0.0
+                    )
                 else:
                     current_price = yes_price
 
@@ -150,8 +158,11 @@ class PositionSyncer:
         client = self._exchange._clob_client
         try:
             from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+
             resp = client.get_balance_allowance(
-                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=2)
+                BalanceAllowanceParams(
+                    asset_type=AssetType.COLLATERAL, signature_type=2
+                )
             )
             if isinstance(resp, dict):
                 return int(resp.get("balance", 0)) / 1e6
@@ -222,8 +233,18 @@ class PositionSyncer:
                        token_id = excluded.token_id,
                        is_paper = excluded.is_paper,
                        updated_at = excluded.updated_at""",
-                (pos.market_id, side, pos.size, pos.avg_cost,
-                 pos.current_price, pos.category, token, token_id, is_paper_flag, now),
+                (
+                    pos.market_id,
+                    side,
+                    pos.size,
+                    pos.avg_cost,
+                    pos.current_price,
+                    pos.category,
+                    token,
+                    token_id,
+                    is_paper_flag,
+                    now,
+                ),
             )
         await self._db.commit()
         log.info("sync.merge_new", count=len(positions))
@@ -322,10 +343,11 @@ class KalshiPositionSyncer:
 
     exchange_name = "kalshi"
 
-    def __init__(self, settings: Settings, db: Database, exchange) -> None:
+    def __init__(self, settings: Settings, db: Database, exchange, paper=None) -> None:
         self._settings = settings
         self._db = db
         self._exchange = exchange
+        self._paper = paper
 
     async def sync(self) -> list[LivePosition]:
         try:
@@ -344,7 +366,9 @@ class KalshiPositionSyncer:
         positions: list[LivePosition] = []
         for row in rows:
             raw_token = (row["token"] or "YES").upper()
-            token = TokenType(raw_token) if raw_token in ("YES", "NO") else TokenType.YES
+            token = (
+                TokenType(raw_token) if raw_token in ("YES", "NO") else TokenType.YES
+            )
             positions.append(
                 LivePosition(
                     market_id=row["market_id"],
@@ -361,6 +385,8 @@ class KalshiPositionSyncer:
         return positions
 
     async def get_cash_balance(self) -> float:
+        if not self._settings.is_live and self._paper is not None:
+            return self._paper.balance
         try:
             return await self._exchange.get_balance()
         except Exception as e:
