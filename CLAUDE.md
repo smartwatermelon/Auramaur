@@ -19,8 +19,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Common commands
 
 ```bash
-# Install (uv-managed)
-uv sync
+# Install (uv-managed) — use --extra dev to install pytest-asyncio so
+# the test suite actually exercises async code; without it, every
+# @pytest.mark.asyncio test silently passes without running.
+uv sync --extra dev
 
 # Run the bot in paper mode (default — kill_switch absent, gates closed)
 uv run auramaur run --agent
