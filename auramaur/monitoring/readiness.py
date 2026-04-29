@@ -28,6 +28,16 @@ underlying signal:
 
 Both proxies should eventually be replaced by direct instrumentation;
 that is tracked as a future-work finding rather than blocking Phase 1.
+
+Brier scoping note: the `calibration` table does not have an `exchange`
+column (see auramaur/db/models.py — only market_id, predicted_prob,
+actual_outcome, resolved_at, category, created_at). Both Brier
+criteria therefore evaluate the bot's accuracy *globally* across every
+exchange the bot has traded on, regardless of the `exchange` argument
+passed to evaluate_readiness. For Phase 1 (Kalshi only) this is
+equivalent to "Kalshi Brier"; for multi-exchange operation this would
+need a schema migration to add `exchange` to calibration so each Brier
+criterion can be scoped per-exchange. Tracked as a Phase 3+ prereq.
 """
 
 from __future__ import annotations
@@ -82,30 +92,15 @@ _REQUIRED_KEYS = ("level", "timestamp", "event")
 _ERROR_LEVELS = {"error", "critical"}
 
 
-async def check_cycle_health(
+def _parse_log_for_errors(
     log_file: Path,
     since: datetime,
-    *,
-    drift_threshold_pct: float = 5.0,
-    sample_events_to_keep: int = 5,
-) -> CriterionResult:
-    """Parse the structlog JSON-line log for ERROR/CRITICAL entries since `since`.
-
-    Format-drift canary: if more than `drift_threshold_pct` of non-empty
-    lines fail to JSON-parse OR are missing the required keys, the log
-    format has changed and the parser is unreliable. That returns FAIL
-    with "format drift" as the reason — better to get a loud failure
-    than a quietly-incorrect readiness report.
+    sample_events_to_keep: int,
+) -> tuple[int, int, int, int, list[str]]:
+    """Synchronous log parser. Returns (total, well_formed, in_window,
+    errors, error_events). Called via asyncio.to_thread from
+    check_cycle_health to avoid blocking the event loop on large logs.
     """
-    if not log_file.exists():
-        return CriterionResult(
-            name="cycle_health",
-            status="INSUFFICIENT_DATA",
-            value="—",
-            threshold="0 errors",
-            detail=f"log file not found at {log_file}",
-        )
-
     total = 0
     well_formed = 0
     in_window = 0
@@ -126,11 +121,15 @@ async def check_cycle_health(
                 continue
             if not all(k in entry for k in _REQUIRED_KEYS):
                 continue
-            well_formed += 1
             try:
                 ts = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
             except (ValueError, AttributeError):
+                # Timestamp format drifted — count as drift, not as well-formed.
                 continue
+            # Increment well_formed AFTER successful timestamp parse so
+            # the canary at the call site catches timestamp-format drift
+            # too, not just JSON-shape drift.
+            well_formed += 1
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
             if ts < since:
@@ -142,6 +141,47 @@ async def check_cycle_health(
                 if len(error_events) < sample_events_to_keep:
                     event = entry.get("event", "")
                     error_events.append(f"{level}:{event}")
+    return total, well_formed, in_window, errors, error_events
+
+
+async def check_cycle_health(
+    log_file: Path,
+    since: datetime,
+    *,
+    drift_threshold_pct: float = 5.0,
+    sample_events_to_keep: int = 5,
+) -> CriterionResult:
+    """Parse the structlog JSON-line log for ERROR/CRITICAL entries since `since`.
+
+    Format-drift canary: if more than `drift_threshold_pct` of non-empty
+    lines either fail to JSON-parse, are missing the required keys, or
+    have an unparseable timestamp, the log format has drifted and the
+    parser is unreliable. That returns FAIL with "format drift" as the
+    reason — better to get a loud failure than a quietly-incorrect
+    readiness report.
+
+    Runs the parse loop in a worker thread (asyncio.to_thread) so a
+    large log file does not stall the event loop while readiness is
+    invoked alongside the running bot.
+    """
+    if not log_file.exists():
+        return CriterionResult(
+            name="cycle_health",
+            status="INSUFFICIENT_DATA",
+            value="—",
+            threshold="0 errors",
+            detail=(
+                f"log file not found at {log_file.resolve()} — "
+                "run `auramaur readiness` from the project root, or pass "
+                "an explicit --log-file"
+            ),
+        )
+
+    import asyncio
+
+    total, well_formed, in_window, errors, error_events = await asyncio.to_thread(
+        _parse_log_for_errors, log_file, since, sample_events_to_keep
+    )
 
     if total == 0:
         return CriterionResult(
@@ -313,7 +353,14 @@ async def check_pass_rate(
 
 async def _resolved_predictions(db: Database, since: datetime) -> list[dict]:
     """Calibration entries with paired market_prob from the first signal
-    on that market. Used by both Brier criteria."""
+    on that market. Used by both Brier criteria.
+
+    The `predicted_prob IS NOT NULL` clause is defensive: the schema
+    declares the column NOT NULL, so it should always hold, but a
+    silent truncation or future schema migration could violate it.
+    Better to skip the row than to TypeError mid-evaluation and abort
+    the whole readiness report.
+    """
     return await db.fetchall(
         """
         SELECT
@@ -329,6 +376,7 @@ async def _resolved_predictions(db: Database, since: datetime) -> list[dict]:
             ) AS market_prob
         FROM calibration c
         WHERE c.actual_outcome IS NOT NULL
+          AND c.predicted_prob IS NOT NULL
           AND c.resolved_at >= ?
         """,
         (since.isoformat(),),
@@ -537,9 +585,11 @@ async def check_divergence(
             ),
             n_samples=len(values),
         )
-    values.sort()
     median = statistics.median(values)
-    # statistics.quantiles gives 100 cut points for n=100; index 94 = p95
+    # statistics.quantiles(n=100) returns 99 cut points (the n−1
+    # boundaries between n equal-probability intervals). Index 94 is
+    # the 95th percentile. Both quantiles() and median() sort
+    # internally, so no pre-sort needed.
     p95 = statistics.quantiles(values, n=100, method="inclusive")[94]
     median_ok = median <= median_threshold
     p95_ok = p95 <= p95_threshold

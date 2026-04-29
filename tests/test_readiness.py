@@ -219,6 +219,28 @@ async def test_cycle_health_drift_canary_fails(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cycle_health_drift_canary_catches_timestamp_format_drift(tmp_path):
+    """If the renderer changes timestamps to a non-ISO format, the canary
+    must catch it — JSON-shape alone is not enough."""
+    log_file = tmp_path / "auramaur.log"
+    now = datetime.now(timezone.utc)
+    # 9 lines with a hypothetical post-renderer-change timestamp format
+    # (epoch seconds, common alternative). All have the required keys
+    # but the timestamp doesn't parse, so they must count as drift.
+    body = ""
+    for _ in range(9):
+        body += (
+            json.dumps({"level": "info", "timestamp": "1714368000", "event": "ok"})
+            + "\n"
+        )
+    body += _structlog_line("info", "ok", now)
+    log_file.write_text(body)
+    result = await check_cycle_health(log_file, now - timedelta(days=7))
+    assert result.status == "FAIL"
+    assert "format has drifted" in result.detail
+
+
+@pytest.mark.asyncio
 async def test_cycle_health_drift_canary_below_threshold_passes(tmp_path):
     """A small fraction of unparseable lines (e.g. truncated last line) is OK."""
     log_file = tmp_path / "auramaur.log"
