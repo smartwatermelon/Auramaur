@@ -34,11 +34,15 @@ The bot's data sources (NewsAPI, FRED, Reddit, Twitter, GDELT, Manifold, Metacul
 
 **Goal:** validate the calibration loop, risk gate, and bot health on the lowest-friction exchange before spending any infrastructure time on VPN containerization.
 
-- Tune Kalshi config: `risk.min_edge_pct: 5.0` (vs. default 3.5) so post-fee edge stays positive. Confirm `arbitrage.exchange_fees.kalshi: 0.07` is wired through to risk-gate edge calculation.
-- Verify Kalshi-relevant tests pass: `tests/test_kalshi.py`, `tests/test_kelly.py`, `tests/test_risk_checks.py`, `tests/test_triple_gate.py`, `tests/test_multi_exchange_risk.py`, `tests/test_cross_arb.py`.
+- **Use upstream defaults — no config tune.** Original draft of this plan called for bumping `risk.min_edge_pct` to 5.0; investigation (Kalshi-config trace, 2026-04-28) showed two reasons that was wrong:
+  1. The 7% Kalshi fee is *already* subtracted from edge inside `auramaur/strategy/signals.py:182-183` before `signal.edge` reaches the risk gate. Upstream's `min_edge_pct: 3.5` is a 3.5pp *post-fee* threshold (raw edge ≥ 10.5pp), not a pre-fee threshold.
+  2. At our $200 starting bankroll, `auramaur/risk/regime.py` overrides the configured values entirely (because equity < `GROWTH_EQUITY_MAX = $1000`). Phase 1 will run on the regime-derived growth-mode params:`kelly_fraction = 0.50` (half-Kelly), `max_stake = $20` (10% of equity), `min_edge_pct = 2.5`. The configured YAML values are irrelevant until equity grows past $1000.
+- Verified Kalshi-relevant tests pass: `tests/test_kalshi.py`, `tests/test_kelly.py`, `tests/test_risk_checks.py`, `tests/test_triple_gate.py`, `tests/test_multi_exchange_risk.py`, `tests/test_cross_arb.py` — all 85/85 pass at this commit.
 - Build `auramaur readiness` CLI subcommand that prints pass/fail on each criterion (§4) against the live SQLite DB.
 - Run bot in paper mode for the rolling 7-day window (longer if Kalshi resolution cadence is slow on the markets the bot picks).
-- Once readiness passes for **7 consecutive days**, gate flip is authorized via the manual ceremony in §5. Real-money cap: **$200**, max stake per market $25, max drawdown 15% (current defaults).
+- Once readiness passes for **7 consecutive days**, gate flip is authorized via the manual ceremony in §5. Real-money cap: **$200**, with regime-effective per-trade max stake of $20 and 2.5pp net-of-fees min-edge gate.
+
+**Why the regime override is the right thing for Phase 1:** the author's regime-switched Kelly is genuinely well-designed for our exact scenario. At $200 equity the dominant failure mode is "fail to compound" (variance is bounded by tiny stakes anyway), so half-Kelly + 2.5pp threshold gets us more trades for calibration data faster than the preservation-mode values would. Phase 1's purpose is validating the calibration loop, not maximizing per-trade EV — more trades is more valuable than higher-edge trades.
 
 **Existing Kalshi account state:** account has a few open long-running bets at the start of this work. They can be ignored or cashed out; they don't materially affect Phase 1 because the bot tracks paper state separately (`is_paper` row tagging in `auramaur/db/`) and the live bankroll cap of $200 is small enough that the open bets aren't load-bearing.
 
@@ -127,7 +131,8 @@ Each upstream PR links to the corresponding finding in its body so the upstream 
 - **Phase 3 trust boundary:** does the Polymarket-Global container run the entire bot, or just an exchange-client subprocess that the host bot talks to over a local socket? Container = simpler, smaller blast radius if compromised. Subprocess = lets the rest of the bot stay native and use non-VPN'd data sources without proxying everything through PIA.
 - **Resolution cadence on Kalshi:** 30 resolved markets in 7 days requires the bot to actually trade on markets that resolve in that window. If most edges the bot finds are on slow-resolving political markets, the readiness window will stretch. We may need to set a `min_resolution_hours` floor explicitly in Phase 1 to bias toward faster markets — TBD once we see real data.
 - **Open Kalshi positions at session start:** Andrew's pre-existing bets — ignore or cash out? Doesn't materially affect Phase 1 either way; deferred until we're about to flip Kalshi live.
-- **Kelly fraction for first $200:** current default `kelly.fraction: 0.30` may be too aggressive for a $200 bankroll. We may want a Phase-1-specific override at 0.15–0.20 until we have ≥ 50 resolved trades of edge data. TBD with first readiness data.
+- **Duplicate fee tables (Crypto.com only, Phase 3+ blocker):** `auramaur/strategy/signals.py` hardcodes `EXCHANGE_FEES` while `config/defaults.yaml` declares `arbitrage.exchange_fees`. They agree on Kalshi and Polymarket but disagree on Crypto.com (0.01 vs 0.075). Documented in `docs/findings/2026-04-28-duplicate-fee-tables.md`. Not Phase 1/2 critical; must be unified before any Crypto.com routing.
+- ~~**Kelly fraction for first $200:**~~ **Resolved 2026-04-28** — investigation showed `auramaur/risk/regime.py` already implements regime-switched Kelly. At $200 equity it overrides the configured 0.30 fraction with growth-mode 0.50, max-stake 10% of equity ($20), and min-edge 2.5pp. The configured value is moot below $1000 equity. No Phase-1-specific override needed.
 
 ---
 
