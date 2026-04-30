@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,6 +13,7 @@ from auramaur.strategy.resolution_tracker import ResolutionTracker
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_market(
     market_id: str = "test-market",
@@ -61,6 +61,7 @@ def _make_discovery(market: Market | None):
 # ---------------------------------------------------------------------------
 # Tests — _detect_resolution
 # ---------------------------------------------------------------------------
+
 
 class TestDetectResolution:
     def test_active_market_returns_none(self):
@@ -114,6 +115,7 @@ class TestDetectResolution:
 # Tests — check_resolutions
 # ---------------------------------------------------------------------------
 
+
 class TestCheckResolutions:
     @pytest.fixture
     def resolved_yes_market(self):
@@ -127,78 +129,102 @@ class TestCheckResolutions:
     def active_market(self):
         return _make_market(market_id="mkt-3", active=True, yes_price=0.60)
 
-    def test_resolves_yes_market(self, resolved_yes_market):
+    @pytest.mark.asyncio
+    async def test_resolves_yes_market(self, resolved_yes_market):
         rows = [{"market_id": "mkt-1", "exchange": "polymarket"}]
         db = _make_db(rows=rows)
         calibration = AsyncMock()
         discoveries = {"polymarket": _make_discovery(resolved_yes_market)}
 
-        tracker = ResolutionTracker(db=db, calibration=calibration, discoveries=discoveries)
-        count = asyncio.get_event_loop().run_until_complete(tracker.check_resolutions())
+        tracker = ResolutionTracker(
+            db=db, calibration=calibration, discoveries=discoveries
+        )
+        count = await tracker.check_resolutions()
 
         assert count == 1
         calibration.record_resolution.assert_awaited_once_with("mkt-1", True)
 
-    def test_resolves_no_market(self, resolved_no_market):
+    @pytest.mark.asyncio
+    async def test_resolves_no_market(self, resolved_no_market):
         rows = [{"market_id": "mkt-2", "exchange": "polymarket"}]
         db = _make_db(rows=rows)
         calibration = AsyncMock()
         discoveries = {"polymarket": _make_discovery(resolved_no_market)}
 
-        tracker = ResolutionTracker(db=db, calibration=calibration, discoveries=discoveries)
-        count = asyncio.get_event_loop().run_until_complete(tracker.check_resolutions())
+        tracker = ResolutionTracker(
+            db=db, calibration=calibration, discoveries=discoveries
+        )
+        count = await tracker.check_resolutions()
 
         assert count == 1
         calibration.record_resolution.assert_awaited_once_with("mkt-2", False)
 
-    def test_skips_active_market(self, active_market):
+    @pytest.mark.asyncio
+    async def test_skips_active_market(self, active_market):
         rows = [{"market_id": "mkt-3", "exchange": "polymarket"}]
         db = _make_db(rows=rows)
         calibration = AsyncMock()
         discoveries = {"polymarket": _make_discovery(active_market)}
 
-        tracker = ResolutionTracker(db=db, calibration=calibration, discoveries=discoveries)
-        count = asyncio.get_event_loop().run_until_complete(tracker.check_resolutions())
+        tracker = ResolutionTracker(
+            db=db, calibration=calibration, discoveries=discoveries
+        )
+        count = await tracker.check_resolutions()
 
         assert count == 0
         calibration.record_resolution.assert_not_awaited()
 
-    def test_handles_missing_discovery(self):
+    @pytest.mark.asyncio
+    async def test_handles_missing_discovery(self):
         rows = [{"market_id": "mkt-1", "exchange": "unknown_exchange"}]
         db = _make_db(rows=rows)
         calibration = AsyncMock()
         discoveries = {}  # No discoveries at all
 
-        tracker = ResolutionTracker(db=db, calibration=calibration, discoveries=discoveries)
-        count = asyncio.get_event_loop().run_until_complete(tracker.check_resolutions())
+        tracker = ResolutionTracker(
+            db=db, calibration=calibration, discoveries=discoveries
+        )
+        count = await tracker.check_resolutions()
 
         assert count == 0
 
-    def test_no_pending_predictions(self):
+    @pytest.mark.asyncio
+    async def test_no_pending_predictions(self):
         db = _make_db(rows=[])
         calibration = AsyncMock()
         discoveries = {"polymarket": _make_discovery(None)}
 
-        tracker = ResolutionTracker(db=db, calibration=calibration, discoveries=discoveries)
-        count = asyncio.get_event_loop().run_until_complete(tracker.check_resolutions())
+        tracker = ResolutionTracker(
+            db=db, calibration=calibration, discoveries=discoveries
+        )
+        count = await tracker.check_resolutions()
 
         assert count == 0
 
-    def test_market_not_found_skipped(self):
+    @pytest.mark.asyncio
+    async def test_market_not_found_skipped(self):
         rows = [{"market_id": "mkt-gone", "exchange": "polymarket"}]
         db = _make_db(rows=rows)
         calibration = AsyncMock()
         discoveries = {"polymarket": _make_discovery(None)}  # get_market returns None
 
-        tracker = ResolutionTracker(db=db, calibration=calibration, discoveries=discoveries)
-        count = asyncio.get_event_loop().run_until_complete(tracker.check_resolutions())
+        tracker = ResolutionTracker(
+            db=db, calibration=calibration, discoveries=discoveries
+        )
+        count = await tracker.check_resolutions()
 
         assert count == 0
 
-    def test_multi_exchange_resolution(self, resolved_yes_market, resolved_no_market):
+    @pytest.mark.asyncio
+    async def test_multi_exchange_resolution(
+        self, resolved_yes_market, resolved_no_market
+    ):
         """Markets from different exchanges are resolved correctly."""
         resolved_no_market_kalshi = _make_market(
-            market_id="kalshi-mkt", active=False, yes_price=0.02, exchange="kalshi",
+            market_id="kalshi-mkt",
+            active=False,
+            yes_price=0.02,
+            exchange="kalshi",
         )
         rows = [
             {"market_id": "mkt-1", "exchange": "polymarket"},
@@ -211,8 +237,10 @@ class TestCheckResolutions:
             "kalshi": _make_discovery(resolved_no_market_kalshi),
         }
 
-        tracker = ResolutionTracker(db=db, calibration=calibration, discoveries=discoveries)
-        count = asyncio.get_event_loop().run_until_complete(tracker.check_resolutions())
+        tracker = ResolutionTracker(
+            db=db, calibration=calibration, discoveries=discoveries
+        )
+        count = await tracker.check_resolutions()
 
         assert count == 2
         calls = calibration.record_resolution.await_args_list
@@ -224,8 +252,10 @@ class TestCheckResolutions:
 # Tests — _settle_position
 # ---------------------------------------------------------------------------
 
+
 class TestSettlePosition:
-    def test_settle_buy_yes_resolved_yes(self):
+    @pytest.mark.asyncio
+    async def test_settle_buy_yes_resolved_yes(self):
         """BUY YES position, market resolves YES — should profit."""
         pos_row = {
             "avg_price": 0.60,
@@ -237,31 +267,26 @@ class TestSettlePosition:
         calibration = AsyncMock()
         tracker = ResolutionTracker(db=db, calibration=calibration, discoveries={})
 
-        asyncio.get_event_loop().run_until_complete(
-            tracker._settle_position("mkt-1", outcome=True)
-        )
+        await tracker._settle_position("mkt-1", outcome=True)
 
         # Should delete from portfolio
         delete_calls = [
-            c for c in db.execute.await_args_list
-            if "DELETE FROM portfolio" in str(c)
+            c for c in db.execute.await_args_list if "DELETE FROM portfolio" in str(c)
         ]
         assert len(delete_calls) >= 1
 
-    def test_settle_no_position(self):
+    @pytest.mark.asyncio
+    async def test_settle_no_position(self):
         """No portfolio entry — should return without error."""
         db = _make_db(pos_row=None)
         calibration = AsyncMock()
         tracker = ResolutionTracker(db=db, calibration=calibration, discoveries={})
 
         # Should not raise
-        asyncio.get_event_loop().run_until_complete(
-            tracker._settle_position("mkt-1", outcome=True)
-        )
+        await tracker._settle_position("mkt-1", outcome=True)
 
         # Should not try to delete anything
         delete_calls = [
-            c for c in db.execute.await_args_list
-            if "DELETE FROM portfolio" in str(c)
+            c for c in db.execute.await_args_list if "DELETE FROM portfolio" in str(c)
         ]
         assert len(delete_calls) == 0

@@ -1,0 +1,13 @@
+[flake8]
+# Match the project's ruff configuration in pyproject.toml so flake8
+# (run via Andrew's global pre-commit hook) doesn't flag style decisions
+# the project has already accepted via ruff.
+max-line-length = 100
+# E203 (whitespace before ':') and W503 (line break before binary op)
+# conflict with black/ruff formatting conventions.
+# E501 (line too long) is handled by ruff which is the primary style
+# enforcer — ruff already enforces max-line-length = 100 but accepts SQL
+# strings and long f-strings. Deferring to ruff avoids double-checking.
+# B007 (loop variable not used in loop body) fires on intentional
+# "for k, v in d.items() where only k is used" patterns that are safe.
+extend-ignore = E203, W503, E501, B007

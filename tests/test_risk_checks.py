@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from auramaur.risk.checks import (
-    CheckResult,
     check_kill_switch,
     check_max_drawdown,
     check_drawdown_heat,
@@ -247,6 +246,34 @@ async def test_time_to_resolution_sufficient():
 @pytest.mark.asyncio
 async def test_time_to_resolution_too_soon():
     result = await check_time_to_resolution(12, 24)
+    assert result.passed is False
+
+
+@pytest.mark.asyncio
+async def test_time_to_resolution_within_max():
+    result = await check_time_to_resolution(
+        48, min_hours=24, max_hours=2160
+    )  # 90d ceiling
+    assert result.passed is True
+
+
+@pytest.mark.asyncio
+async def test_time_to_resolution_exceeds_max():
+    result = await check_time_to_resolution(9000, min_hours=24, max_hours=2160)
+    assert result.passed is False
+    assert "maximum" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_time_to_resolution_no_ceiling():
+    result = await check_time_to_resolution(9000, min_hours=24, max_hours=0)
+    assert result.passed is True
+
+
+@pytest.mark.asyncio
+async def test_time_to_resolution_unknown_expiry_rejected_when_ceiling_set():
+    """float('inf') (unknown end_date) should fail when a ceiling is configured."""
+    result = await check_time_to_resolution(float("inf"), min_hours=24, max_hours=2160)
     assert result.passed is False
 
 

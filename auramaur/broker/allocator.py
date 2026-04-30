@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import structlog
 
@@ -125,7 +125,9 @@ class CapitalAllocator:
 
             # Skip if we've hit the position limit
             if open_count >= max_positions:
-                show_order_dropped(market_id, f"position limit reached ({open_count}/{max_positions})")
+                show_order_dropped(
+                    market_id, f"position limit reached ({open_count}/{max_positions})"
+                )
                 log.info(
                     "allocator.position_limit",
                     open_count=open_count,
@@ -137,7 +139,10 @@ class CapitalAllocator:
             cat_total = category_allocated.get(category, 0.0)
             category_budget = category_cap_pct * available_capital
             if cat_total >= category_budget:
-                show_order_dropped(market_id, f"category '{category}' cap reached (${cat_total:.2f}/${category_budget:.2f})")
+                show_order_dropped(
+                    market_id,
+                    f"category '{category}' cap reached (${cat_total:.2f}/${category_budget:.2f})",
+                )
                 log.warning(
                     "allocator.category_cap",
                     market_id=market_id,
@@ -154,8 +159,14 @@ class CapitalAllocator:
             cat_headroom = category_budget - cat_total
             size = min(desired, remaining_capital, cat_headroom)
 
-            if size <= 0:
-                show_order_dropped(market_id, f"no capital (${remaining_capital:.2f} remaining, need ${desired:.2f})")
+            # Use rounded comparison to avoid float-exhaustion: remaining_capital
+            # can reach ~1e-10 instead of 0.0, making size technically > 0 while
+            # round(size, 2) == 0.00, which produces spurious $0.00 DROPPED orders.
+            if round(size, 2) <= 0:
+                show_order_dropped(
+                    market_id,
+                    f"no capital (${remaining_capital:.2f} remaining, need ${desired:.2f})",
+                )
                 log.warning(
                     "allocator.no_capital",
                     market_id=market_id,

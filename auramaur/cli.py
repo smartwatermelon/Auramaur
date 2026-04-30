@@ -9,20 +9,20 @@ os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning,ignore::RuntimeWarnin
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-import asyncio
+import asyncio  # noqa: E402  (warnings filter above must run first)
 
-import click
-import structlog
-from rich.console import Console
-from rich.live import Live
-from rich.table import Table
-from rich.panel import Panel
-from rich.layout import Layout
-from rich.text import Text
+import click  # noqa: E402
+import structlog  # noqa: E402
+from rich.console import Console  # noqa: E402
+from rich.live import Live  # noqa: E402
+from rich.table import Table  # noqa: E402
+from rich.panel import Panel  # noqa: E402
+from rich.layout import Layout  # noqa: E402
+from rich.text import Text  # noqa: E402
 
-from config.settings import Settings
-from auramaur.bot import AuramaurBot
-from auramaur.db.database import Database
+from config.settings import Settings  # noqa: E402
+from auramaur.bot import AuramaurBot  # noqa: E402
+from auramaur.db.database import Database  # noqa: E402
 
 console = Console()
 log = structlog.get_logger()
@@ -40,7 +40,10 @@ def _make_dashboard_layout(stats: dict) -> Layout:
     # Header
     mode = "[bold red]LIVE[/]" if stats.get("live") else "[bold green]PAPER[/]"
     header = Panel(
-        Text.from_markup(f"[bold]AURAMAUR[/] Polymarket Bot  |  Mode: {mode}  |  Kill Switch: {'[red]ACTIVE[/]' if stats.get('kill_switch') else '[green]OFF[/]'}"),
+        Text.from_markup(
+            f"[bold]AURAMAUR[/] Polymarket Bot  |  Mode: {mode}  |  "
+            f"Kill Switch: {'[red]ACTIVE[/]' if stats.get('kill_switch') else '[green]OFF[/]'}"
+        ),
         style="bold blue",
     )
     layout["header"].update(header)
@@ -132,8 +135,11 @@ async def _get_dashboard_stats(db: Database, settings: Settings) -> dict:
     )
     stats["positions"] = [
         {
-            "market_id": r["market_id"], "question": r["question"] or r["market_id"],
-            "side": r["side"], "size": r["size"], "avg_price": r["avg_price"],
+            "market_id": r["market_id"],
+            "question": r["question"] or r["market_id"],
+            "side": r["side"],
+            "size": r["size"],
+            "avg_price": r["avg_price"],
             "current_price": r["current_price"] or r["avg_price"],
             "pnl": r["unrealized_pnl"] or 0,
         }
@@ -149,9 +155,12 @@ async def _get_dashboard_stats(db: Database, settings: Settings) -> dict:
     )
     stats["signals"] = [
         {
-            "market_id": r["market_id"], "question": r["question"] or r["market_id"],
-            "claude_prob": r["claude_prob"], "market_prob": r["market_prob"],
-            "edge": r["edge"], "action": r["action"] or "",
+            "market_id": r["market_id"],
+            "question": r["question"] or r["market_id"],
+            "claude_prob": r["claude_prob"],
+            "market_prob": r["market_prob"],
+            "edge": r["edge"],
+            "action": r["action"] or "",
         }
         for r in rows
     ]
@@ -189,8 +198,18 @@ def main():
 
 
 @main.command()
-@click.option("--agent", is_flag=True, default=False, help="Use agentic analyzer (relational reasoning + web search)")
-@click.option("--exchange", default=None, type=click.Choice(["polymarket", "kalshi", "ibkr"]), help="Run only a specific exchange (isolated instance)")
+@click.option(
+    "--agent",
+    is_flag=True,
+    default=False,
+    help="Use agentic analyzer (relational reasoning + web search)",
+)
+@click.option(
+    "--exchange",
+    default=None,
+    type=click.Choice(["polymarket", "kalshi", "ibkr"]),
+    help="Run only a specific exchange (isolated instance)",
+)
 def run(agent: bool, exchange: str | None):
     """Start the bot."""
     settings = Settings()
@@ -239,6 +258,7 @@ def scan(query: str, limit: int):
 
     async def _scan():
         from auramaur.exchange.gamma import GammaClient
+
         gamma = GammaClient()
         try:
             if query == "top":
@@ -256,9 +276,12 @@ def scan(query: str, limit: int):
 
             for m in markets:
                 table.add_row(
-                    m.id[:12], m.question[:50],
-                    f"{m.outcome_yes_price:.3f}", f"{m.outcome_no_price:.3f}",
-                    f"${m.volume:,.0f}", f"${m.liquidity:,.0f}",
+                    m.id[:12],
+                    m.question[:50],
+                    f"{m.outcome_yes_price:.3f}",
+                    f"{m.outcome_no_price:.3f}",
+                    f"${m.volume:,.0f}",
+                    f"${m.liquidity:,.0f}",
                 )
 
             console.print(table)
@@ -274,15 +297,19 @@ def redeem_check():
 
     async def _check():
         from auramaur.broker.redeemer import (
-            fetch_redeemable_positions, summarize_redemptions,
+            fetch_redeemable_positions,
+            summarize_redemptions,
         )
+
         settings = Settings()
         proxy = settings.polymarket_proxy_address
         if not proxy:
             console.print("[red]POLYMARKET_PROXY_ADDRESS not set in environment.[/]")
             return
 
-        console.print(f"Checking redeemable positions for [cyan]{proxy[:10]}…{proxy[-6:]}[/]\n")
+        console.print(
+            f"Checking redeemable positions for [cyan]{proxy[:10]}…{proxy[-6:]}[/]\n"
+        )
         try:
             positions = await fetch_redeemable_positions(proxy)
         except Exception as e:
@@ -290,7 +317,9 @@ def redeem_check():
             return
 
         if not positions:
-            console.print("[green]No positions to redeem — everything's settled or still open.[/]")
+            console.print(
+                "[green]No positions to redeem — everything's settled or still open.[/]"
+            )
             return
 
         summary = summarize_redemptions(positions)
@@ -338,7 +367,7 @@ def redeem_check():
             f"[bold]Pending oracle:[/] {summary['pending_oracle']}  "
             f"([yellow]${summary['payout_pending_usdc']:.2f}[/] expected)"
         )
-        if summary['neg_risk_count'] > 0:
+        if summary["neg_risk_count"] > 0:
             console.print(
                 f"[yellow]Note:[/] {summary['neg_risk_count']} NegRisk positions — "
                 "these need the NegRiskAdapter contract for on-chain redemption."
@@ -362,30 +391,39 @@ def status():
         stats = await _get_dashboard_stats(db, settings)
 
         console.print(f"Mode: {'[red]LIVE[/]' if stats['live'] else '[green]PAPER[/]'}")
-        console.print(f"Kill Switch: {'[red]ACTIVE[/]' if stats['kill_switch'] else '[green]OFF[/]'}")
+        console.print(
+            f"Kill Switch: {'[red]ACTIVE[/]' if stats['kill_switch'] else '[green]OFF[/]'}"
+        )
 
         # Show real Polymarket balance when live
         if settings.is_live and settings.polygon_private_key:
             try:
                 from py_clob_client.client import ClobClient
                 from py_clob_client.clob_types import ApiCreds
+
                 client = ClobClient(
                     "https://clob.polymarket.com",
                     key=settings.polygon_private_key,
                     chain_id=137,
                 )
-                client.set_api_creds(ApiCreds(
-                    api_key=settings.polymarket_api_key,
-                    api_secret=settings.polymarket_api_secret,
-                    api_passphrase=settings.polymarket_passphrase,
-                ))
+                client.set_api_creds(
+                    ApiCreds(
+                        api_key=settings.polymarket_api_key,
+                        api_secret=settings.polymarket_api_secret,
+                        api_passphrase=settings.polymarket_passphrase,
+                    )
+                )
                 orders = client.get_orders()
-                console.print(f"Polymarket: [green]connected[/] — {len(orders)} open orders")
+                console.print(
+                    f"Polymarket: [green]connected[/] — {len(orders)} open orders"
+                )
             except Exception as e:
                 console.print(f"Polymarket: [red]error[/] — {str(e)[:60]}")
 
-        if stats['balance'] is None:
-            console.print("Balance: [dim]n/a (live — see running bot for on-chain cash)[/]")
+        if stats["balance"] is None:
+            console.print(
+                "Balance: [dim]n/a (live — see running bot for on-chain cash)[/]"
+            )
         else:
             console.print(f"Balance: ${stats['balance']:.2f}")
         console.print(f"PnL: ${stats['total_pnl']:.2f}")
@@ -400,12 +438,27 @@ def status():
 
 @main.command()
 @click.option("--days", default=30, help="Number of days to backtest")
-@click.option("--min-edge", default=None, type=float, help="Minimum edge % to trade (overrides config)")
-@click.option("--kelly-fraction", default=None, type=float, help="Kelly fraction (overrides config)")
-@click.option("--compare", is_flag=True, help="Compare two strategies (default params vs aggressive)")
-def backtest(days: int, min_edge: float | None, kelly_fraction: float | None, compare: bool):
+@click.option(
+    "--min-edge",
+    default=None,
+    type=float,
+    help="Minimum edge % to trade (overrides config)",
+)
+@click.option(
+    "--kelly-fraction",
+    default=None,
+    type=float,
+    help="Kelly fraction (overrides config)",
+)
+@click.option(
+    "--compare",
+    is_flag=True,
+    help="Compare two strategies (default params vs aggressive)",
+)
+def backtest(
+    days: int, min_edge: float | None, kelly_fraction: float | None, compare: bool
+):
     """Run backtest on historical signals."""
-    from rich.columns import Columns
 
     from auramaur.backtest.engine import BacktestEngine
 
@@ -427,7 +480,9 @@ def backtest(days: int, min_edge: float | None, kelly_fraction: float | None, co
                     "min_edge_pct": max(1.0, settings.risk.min_edge_pct - 2.0),
                     "kelly_fraction": min(0.5, settings.kelly.fraction * 1.6),
                 }
-                comparison = await engine.compare_strategies(params_a, params_b, days=days)
+                comparison = await engine.compare_strategies(
+                    params_a, params_b, days=days
+                )
                 _display_comparison(comparison)
             else:
                 result = await engine.run(
@@ -444,23 +499,36 @@ def backtest(days: int, min_edge: float | None, kelly_fraction: float | None, co
 
 def _display_backtest_result(result, days: int):
     """Render backtest results with Rich tables and panels."""
-    from auramaur.backtest.engine import BacktestResult
 
     if result.total_trades == 0:
-        console.print(Panel(
-            "[yellow]No resolved signals found for backtesting.[/]\n"
-            "The backtest requires signals with matching calibration resolutions.\n"
-            "Run the bot to collect data first.",
-            title="Backtest - No Data",
-            border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                "[yellow]No resolved signals found for backtesting.[/]\n"
+                "The backtest requires signals with matching calibration resolutions.\n"
+                "Run the bot to collect data first.",
+                title="Backtest - No Data",
+                border_style="yellow",
+            )
+        )
         return
 
     # --- Overall Performance Panel ---
     pnl_style = "green" if result.total_pnl >= 0 else "red"
-    sharpe_style = "green" if result.sharpe_ratio >= 1.0 else ("yellow" if result.sharpe_ratio >= 0 else "red")
-    brier_style = "green" if result.brier_score < 0.2 else ("yellow" if result.brier_score < 0.3 else "red")
-    dd_style = "green" if result.max_drawdown_pct < 10 else ("yellow" if result.max_drawdown_pct < 20 else "red")
+    sharpe_style = (
+        "green"
+        if result.sharpe_ratio >= 1.0
+        else ("yellow" if result.sharpe_ratio >= 0 else "red")
+    )
+    brier_style = (
+        "green"
+        if result.brier_score < 0.2
+        else ("yellow" if result.brier_score < 0.3 else "red")
+    )
+    dd_style = (
+        "green"
+        if result.max_drawdown_pct < 10
+        else ("yellow" if result.max_drawdown_pct < 20 else "red")
+    )
 
     overview = Table(show_header=False, expand=True, box=None, padding=(0, 2))
     overview.add_column("Metric", style="bold")
@@ -469,31 +537,45 @@ def _display_backtest_result(result, days: int):
     overview.add_column("Value", justify="right")
 
     overview.add_row(
-        "Total PnL", f"[{pnl_style}]${result.total_pnl:+.2f}[/]",
-        "Total Trades", str(result.total_trades),
+        "Total PnL",
+        f"[{pnl_style}]${result.total_pnl:+.2f}[/]",
+        "Total Trades",
+        str(result.total_trades),
     )
     overview.add_row(
-        "Win Rate", f"{result.win_rate:.1f}%",
-        "Wins / Losses", f"[green]{result.winning_trades}[/] / [red]{result.losing_trades}[/]",
+        "Win Rate",
+        f"{result.win_rate:.1f}%",
+        "Wins / Losses",
+        f"[green]{result.winning_trades}[/] / [red]{result.losing_trades}[/]",
     )
     overview.add_row(
-        "Sharpe Ratio", f"[{sharpe_style}]{result.sharpe_ratio:.2f}[/]",
-        "Avg PnL/Trade", f"${result.avg_pnl_per_trade:+.2f}",
+        "Sharpe Ratio",
+        f"[{sharpe_style}]{result.sharpe_ratio:.2f}[/]",
+        "Avg PnL/Trade",
+        f"${result.avg_pnl_per_trade:+.2f}",
     )
     overview.add_row(
-        "Brier Score", f"[{brier_style}]{result.brier_score:.4f}[/]",
-        "Accuracy", f"{result.accuracy:.1f}%",
+        "Brier Score",
+        f"[{brier_style}]{result.brier_score:.4f}[/]",
+        "Accuracy",
+        f"{result.accuracy:.1f}%",
     )
     overview.add_row(
-        "Max Drawdown", f"[{dd_style}]{result.max_drawdown_pct:.1f}%[/]",
-        "Avg Edge", f"{result.avg_edge:.1f}%",
+        "Max Drawdown",
+        f"[{dd_style}]{result.max_drawdown_pct:.1f}%[/]",
+        "Avg Edge",
+        f"{result.avg_edge:.1f}%",
     )
     overview.add_row(
-        "Best Trade", f"[green]${result.best_trade:+.2f}[/]",
-        "Worst Trade", f"[red]${result.worst_trade:+.2f}[/]",
+        "Best Trade",
+        f"[green]${result.best_trade:+.2f}[/]",
+        "Worst Trade",
+        f"[red]${result.worst_trade:+.2f}[/]",
     )
 
-    console.print(Panel(overview, title=f"Backtest Results ({days} days)", border_style="blue"))
+    console.print(
+        Panel(overview, title=f"Backtest Results ({days} days)", border_style="blue")
+    )
 
     # --- Category Breakdown ---
     if result.by_category:
@@ -505,7 +587,9 @@ def _display_backtest_result(result, days: int):
         cat_table.add_column("Avg Edge", justify="right")
         cat_table.add_column("Brier", justify="right")
 
-        sorted_cats = sorted(result.by_category.items(), key=lambda x: x[1]["pnl"], reverse=True)
+        sorted_cats = sorted(
+            result.by_category.items(), key=lambda x: x[1]["pnl"], reverse=True
+        )
         for cat_name, stats in sorted_cats:
             pnl_s = "green" if stats["pnl"] >= 0 else "red"
             cat_table.add_row(
@@ -525,7 +609,9 @@ def _display_backtest_result(result, days: int):
 
     # --- Top/Bottom Trades ---
     if result.trade_details:
-        sorted_trades = sorted(result.trade_details, key=lambda t: t["pnl"], reverse=True)
+        sorted_trades = sorted(
+            result.trade_details, key=lambda t: t["pnl"], reverse=True
+        )
 
         top_n = min(5, len(sorted_trades))
 
@@ -554,7 +640,9 @@ def _display_backtest_result(result, days: int):
             trades_table.add_section()
             for t in sorted_trades[-top_n:]:
                 pnl_s = "green" if t["pnl"] >= 0 else "red"
-                outcome_s = "[green]YES[/]" if t["actual_outcome"] == 1 else "[red]NO[/]"
+                outcome_s = (
+                    "[green]YES[/]" if t["actual_outcome"] == 1 else "[red]NO[/]"
+                )
                 trades_table.add_row(
                     t["question"][:45],
                     f"{t['claude_prob']:.3f}",
@@ -609,7 +697,9 @@ def _display_pnl_curve(pnl_curve: list[float]):
 
     # X-axis
     rows.append(" " * 10 + "+" + "-" * len(sampled))
-    rows.append(" " * 10 + f" Trade 1{' ' * max(0, len(sampled) - 14)}Trade {len(pnl_curve)}")
+    rows.append(
+        " " * 10 + f" Trade 1{' ' * max(0, len(sampled) - 14)}Trade {len(pnl_curve)}"
+    )
 
     chart_text = "\n".join(rows)
     console.print(Panel(chart_text, title="Cumulative PnL Curve", border_style="blue"))
@@ -667,23 +757,28 @@ def _display_comparison(comparison: dict):
         else:
             diff_style = "red" if diff > 0 else ("green" if diff < 0 else "")
 
-        table.add_row(label, a_str, b_str, f"[{diff_style}]{d_str}[/]" if diff_style else d_str)
+        table.add_row(
+            label, a_str, b_str, f"[{diff_style}]{d_str}[/]" if diff_style else d_str
+        )
 
     console.print(table)
 
     winner = comparison["winner"]
-    console.print(Panel(
-        f"[bold]Winner: Strategy {winner}[/]  |  "
-        f"PnL advantage: ${comparison['pnl_diff']:+.2f}  |  "
-        f"Sharpe advantage: {comparison['sharpe_diff']:+.2f}",
-        border_style="green" if winner == "A" else "yellow",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Winner: Strategy {winner}[/]  |  "
+            f"PnL advantage: ${comparison['pnl_diff']:+.2f}  |  "
+            f"Sharpe advantage: {comparison['sharpe_diff']:+.2f}",
+            border_style="green" if winner == "A" else "yellow",
+        )
+    )
 
 
 @main.command()
 def kill():
     """Activate the kill switch."""
     from pathlib import Path
+
     Path("KILL_SWITCH").touch()
     console.print("[bold red]KILL SWITCH ACTIVATED[/]")
 
@@ -692,6 +787,7 @@ def kill():
 def unkill():
     """Deactivate the kill switch."""
     from pathlib import Path
+
     ks = Path("KILL_SWITCH")
     if ks.exists():
         ks.unlink()
@@ -700,15 +796,145 @@ def unkill():
         console.print("Kill switch was not active.")
 
 
+@main.command()
+@click.option(
+    "--exchange",
+    default=None,
+    type=click.Choice(["polymarket", "kalshi", "ibkr", "cryptodotcom"]),
+    help="Filter signals/trades to one exchange. Defaults to all.",
+)
+@click.option(
+    "--days",
+    default=7,
+    type=int,
+    help="Rolling window in days (default 7).",
+)
+@click.option(
+    "--log-file",
+    default="auramaur.log",
+    type=click.Path(),
+    help="Path to the structlog JSON-line log file (default ./auramaur.log).",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    default=False,
+    help="Emit a JSON report instead of the human table.",
+)
+def readiness(exchange, days, log_file, json_output):
+    """Evaluate the live-trading readiness criteria.
+
+    Prints PASS/FAIL/INSUFFICIENT_DATA per criterion. Exits 0 if all
+    criteria pass, 1 otherwise — so this can be used as a precondition
+    by the gate-flip ceremony (see docs/plans/2026-04-28-deployment-plan.md
+    §5).
+    """
+    from dataclasses import asdict
+    from pathlib import Path
+    from auramaur.monitoring.readiness import evaluate_readiness
+
+    async def _run():
+        settings = Settings()
+        # Pick the per-exchange fee for the PnL-after-fees criterion. The
+        # arbitrage.exchange_fees table is the configured one (the
+        # signals.py constant is hardcoded — see
+        # docs/findings/2026-04-28-duplicate-fee-tables.md). For the
+        # readiness check we use the configured value; if the duplicate
+        # tables get unified later, this stays correct.
+        if exchange:
+            fee_rate = settings.arbitrage.exchange_fees.get(exchange, 0.07)
+        else:
+            fee_rate = 0.07  # default Kalshi assumption for Phase 1
+
+        db = Database()
+        await db.connect()
+        try:
+            return await evaluate_readiness(
+                db,
+                log_file=Path(log_file),
+                exchange=exchange,
+                days=days,
+                fee_rate=fee_rate,
+            )
+        finally:
+            await db.close()
+
+    report = asyncio.run(_run())
+
+    if json_output:
+        payload = {
+            "timestamp": report.timestamp.isoformat(),
+            "exchange": report.exchange,
+            "window_days": report.window_days,
+            "overall_pass": report.overall_pass,
+            "criteria": [asdict(c) for c in report.criteria],
+        }
+        import json as _json
+
+        console.print_json(_json.dumps(payload))
+    else:
+        _render_readiness_table(report)
+
+    # Use click's exit so the exit code propagates correctly through Click's
+    # standalone-mode handling. raw sys.exit() inside the asyncio coroutine
+    # was being swallowed.
+    if not report.overall_pass:
+        raise click.exceptions.Exit(1)
+
+
+def _render_readiness_table(report) -> None:
+    status_styles = {
+        "PASS": "[green]PASS[/]",
+        "FAIL": "[red]FAIL[/]",
+        "INSUFFICIENT_DATA": "[yellow]INSUFFICIENT_DATA[/]",
+    }
+    header = (
+        f"Readiness — {report.exchange or 'all exchanges'} "
+        f"(window: {report.window_days}d)"
+    )
+    table = Table(title=header, expand=True)
+    table.add_column("Criterion", style="cyan")
+    table.add_column("Status", justify="center")
+    table.add_column("Value", justify="right")
+    table.add_column("Threshold", justify="right")
+    table.add_column("Notes", overflow="fold")
+    for c in report.criteria:
+        table.add_row(
+            c.name,
+            status_styles.get(c.status, c.status),
+            c.value,
+            c.threshold,
+            c.detail,
+        )
+    console.print(table)
+    overall = (
+        "[bold green]READY[/]" if report.overall_pass else "[bold red]NOT READY[/]"
+    )
+    console.print(f"Overall: {overall}")
+
+
 @main.command("redeem")
-@click.option("--submit", is_flag=True, default=False,
-              help="Broadcast the Safe transactions. Requires AURAMAUR_LIVE=true, "
-                   "execution.live=true, and AURAMAUR_ENABLE_REDEMPTION=true. "
-                   "Omit to dry-run (build + sign + show calldata, never broadcast).")
-@click.option("--limit", default=10, type=int,
-              help="Maximum number of redemptions to attempt in this run.")
-@click.option("--min-payout", default=1.0, type=float,
-              help="Skip positions with expected payout below this amount (USDC).")
+@click.option(
+    "--submit",
+    is_flag=True,
+    default=False,
+    help="Broadcast the Safe transactions. Requires AURAMAUR_LIVE=true, "
+    "execution.live=true, and AURAMAUR_ENABLE_REDEMPTION=true. "
+    "Omit to dry-run (build + sign + show calldata, never broadcast).",
+)
+@click.option(
+    "--limit",
+    default=10,
+    type=int,
+    help="Maximum number of redemptions to attempt in this run.",
+)
+@click.option(
+    "--min-payout",
+    default=1.0,
+    type=float,
+    help="Skip positions with expected payout below this amount (USDC).",
+)
 def redeem_cmd(submit: bool, limit: int, min_payout: float):
     """Redeem winning conditional tokens to USDC on-chain.
 
@@ -716,6 +942,7 @@ def redeem_cmd(submit: bool, limit: int, min_payout: float):
     to Polygon but does not broadcast. Review the Safe nonce, calldata size,
     and target contract before flipping the gates.
     """
+
     async def run():
         import aiohttp
         from auramaur.broker.onchain import OnChainRedeemer
@@ -737,26 +964,42 @@ def redeem_cmd(submit: bool, limit: int, min_payout: float):
                     include_pending=False,
                 )
 
-            ready = [p for p in positions
-                     if p.redeemable_now and p.is_winner and p.payout >= min_payout]
+            ready = [
+                p
+                for p in positions
+                if p.redeemable_now and p.is_winner and p.payout >= min_payout
+            ]
             ready.sort(key=lambda p: p.payout, reverse=True)
             ready = ready[:limit]
 
             if not ready:
-                console.print(f"[yellow]Nothing redeemable with payout ≥ ${min_payout:.2f}[/]")
+                console.print(
+                    f"[yellow]Nothing redeemable with payout ≥ ${min_payout:.2f}[/]"
+                )
                 return
 
             total = sum(p.payout for p in ready)
-            console.print(f"[bold]{len(ready)} position(s) redeemable — total payout ${total:.2f}[/]")
+            console.print(
+                f"[bold]{len(ready)} position(s) redeemable — total payout ${total:.2f}[/]"
+            )
 
             redeemer = OnChainRedeemer(settings, db)
             gates_open = redeemer._is_live_submission_allowed()
 
             if submit and not gates_open:
-                console.print("[red]--submit passed but gates are closed. Need all of:[/]")
-                console.print(f"  AURAMAUR_LIVE=true           (now: {settings.auramaur_live})")
-                console.print(f"  execution.live=true          (now: {settings.execution.live})")
-                console.print(f"  AURAMAUR_ENABLE_REDEMPTION=true (now: {settings.auramaur_enable_redemption})")
+                console.print(
+                    "[red]--submit passed but gates are closed. Need all of:[/]"
+                )
+                console.print(
+                    f"  AURAMAUR_LIVE=true           (now: {settings.auramaur_live})"
+                )
+                console.print(
+                    f"  execution.live=true          (now: {settings.execution.live})"
+                )
+                console.print(
+                    "  AURAMAUR_ENABLE_REDEMPTION=true "
+                    f"(now: {settings.auramaur_enable_redemption})"
+                )
                 console.print("  KILL_SWITCH absent")
                 console.print("Running as dry-run instead.")
 
@@ -785,9 +1028,13 @@ def redeem_cmd(submit: bool, limit: int, min_payout: float):
                         f"payout=${pos.payout:.2f} {pos.title[:50]}"
                     )
                 elif result.status == "skipped":
-                    console.print(f"[dim]skipped[/] (already recorded) {pos.title[:60]}")
+                    console.print(
+                        f"[dim]skipped[/] (already recorded) {pos.title[:60]}"
+                    )
                 else:
-                    console.print(f"[red]{result.status}[/] {pos.title[:50]}: {result.error}")
+                    console.print(
+                        f"[red]{result.status}[/] {pos.title[:50]}: {result.error}"
+                    )
         finally:
             await db.close()
 

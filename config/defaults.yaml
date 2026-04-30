@@ -2,7 +2,7 @@
 
 execution:
   live: true
-  paper_initial_balance: 111.0
+  paper_initial_balance: 500.0
   limit_order_ttl_seconds: 300
   spread_capture_min_bps: 50
   stop_loss_pct: 30.0
@@ -23,6 +23,7 @@ risk:
   implied_prob_max: 0.95
   category_exposure_cap_pct: 60.0
   time_to_resolution_min_hours: 24
+  time_to_resolution_max_days: 90   # 0 = no ceiling; 90 recommended for paper eval
   max_correlated_positions: 10
   second_opinion_divergence_max: 0.25
 

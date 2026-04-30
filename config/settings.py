@@ -2,13 +2,70 @@
 
 from __future__ import annotations
 
+import atexit
 import os
+import tempfile
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
+
+
+# Module-level cache so repeated Settings() instances within one process
+# share the same materialised tempfile rather than each writing their own.
+# Keyed by a stable hash of the PEM contents so a key rotation invalidates
+# the cache.
+_MATERIALISED_KALSHI_KEY: dict[str, str] = {}
+
+
+def _materialise_kalshi_pem(pem: str) -> str:
+    """Validate a Kalshi RSA private-key PEM and write it to a tempfile.
+
+    Returns the tempfile path (mode 0600). Raises ValueError if the PEM
+    is not parseable as a private key — better to fail loudly at Settings
+    init than to write a junk file and have kalshi-python error out
+    inscrutably on its first request.
+
+    The tempfile lives in `tempfile.gettempdir()` (e.g. /tmp on Linux,
+    /var/folders/.../T on macOS). It is registered with atexit to be
+    deleted on process exit, but the OS will also clean it up
+    eventually. Mode is 0600 so other local users cannot read it.
+
+    The materialiser caches by PEM contents hash so repeated Settings()
+    constructions in the same process reuse one tempfile.
+    """
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+    import hashlib
+
+    pem_bytes = pem.strip().encode()
+    cache_key = hashlib.sha256(pem_bytes).hexdigest()
+    cached = _MATERIALISED_KALSHI_KEY.get(cache_key)
+    if cached is not None and Path(cached).exists():
+        return cached
+
+    try:
+        load_pem_private_key(pem_bytes, password=None)
+    except Exception as e:
+        raise ValueError(
+            f"KALSHI_PRIVATE_KEY env var does not parse as a PEM private key: {e}. "
+            "Expected a string containing '-----BEGIN ... PRIVATE KEY-----' "
+            "followed by base64-encoded body and the matching '-----END ...-----' line."
+        ) from e
+
+    fd, path = tempfile.mkstemp(prefix="auramaur-kalshi-", suffix=".pem")
+    try:
+        os.write(fd, pem_bytes)
+        if not pem_bytes.endswith(b"\n"):
+            os.write(fd, b"\n")
+    finally:
+        os.close(fd)
+    os.chmod(path, 0o600)
+
+    atexit.register(lambda: Path(path).unlink(missing_ok=True))
+    _MATERIALISED_KALSHI_KEY[cache_key] = path
+    return path
 
 
 def _load_defaults() -> dict:
@@ -46,6 +103,7 @@ class RiskConfig(BaseModel):
     implied_prob_max: float = 0.95
     category_exposure_cap_pct: float = 30.0
     time_to_resolution_min_hours: int = 24
+    time_to_resolution_max_days: int = 90  # 0 = no ceiling
     max_correlated_positions: int = 5
     second_opinion_divergence_max: float = 0.15
 
@@ -111,7 +169,9 @@ class NLPConfig(BaseModel):
     # edge signal; "tool_use" forces it for every batched market;
     # "strategic_batch" disables the refinement path entirely.
     analysis_mode: Literal["strategic_batch", "tool_use", "auto"] = "auto"
-    tool_use_edge_threshold_pct: float = 5.0  # edge % above which tool-use fires in auto mode
+    tool_use_edge_threshold_pct: float = (
+        5.0  # edge % above which tool-use fires in auto mode
+    )
     tool_use_max_budget_usd: float = 0.50  # per-market tool-use budget cap
     tool_use_max_markets_per_cycle: int = 4  # cap concurrent refinements per cycle
     tool_use_model: str = "claude-opus-4-7"  # can differ from strategic batch model
@@ -136,7 +196,9 @@ class CalibrationConfig(BaseModel):
 
 class MarketMakerConfig(BaseModel):
     enabled: bool = True
-    min_spread_bps: int = 80  # minimum spread in bps; below the 1-tick improvement, join BBO
+    min_spread_bps: int = (
+        80  # minimum spread in bps; below the 1-tick improvement, join BBO
+    )
     quote_size: float = 10.0  # tokens per side
     max_inventory: float = 50.0  # max directional exposure per market
     max_markets: int = 5  # max simultaneous MM markets
@@ -147,7 +209,7 @@ class BrokerConfig(BaseModel):
     sync_interval_seconds: int = 60
     use_limit_orders: bool = True
     limit_spread_threshold: float = 0.03  # Use limits when spread >= 3 cents
-    limit_edge_threshold: float = 20.0    # Use market orders when edge > 20%
+    limit_edge_threshold: float = 20.0  # Use market orders when edge > 20%
     limit_price_improvement_ticks: int = 1  # Improve on BBO by 1 tick
     max_slippage_bps: int = 100
 
@@ -166,7 +228,17 @@ class IBKRConfig(BaseModel):
     live_port: int = 7496
     client_id: int = 1
     environment: str = "paper"  # "paper" | "live"
-    watchlist: list[str] = ["SPY", "QQQ", "AAPL", "MSFT", "TSLA", "NVDA", "AMZN", "META", "GOOGL"]
+    watchlist: list[str] = [
+        "SPY",
+        "QQQ",
+        "AAPL",
+        "MSFT",
+        "TSLA",
+        "NVDA",
+        "AMZN",
+        "META",
+        "GOOGL",
+    ]
     max_contracts_per_symbol: int = 10
 
 
@@ -197,10 +269,12 @@ class ArbitrageConfig(BaseModel):
     min_profit_after_fees_pct: float = 1.5
     max_arb_size: float = 25.0
     cross_exchange_auto_execute: bool = True
-    exchange_fees: dict[str, float] = Field(default_factory=lambda: {
-        "polymarket": 0.0,
-        "kalshi": 0.07,
-    })
+    exchange_fees: dict[str, float] = Field(
+        default_factory=lambda: {
+            "polymarket": 0.0,
+            "kalshi": 0.07,
+        }
+    )
 
 
 class AnalysisConfig(BaseModel):
@@ -234,8 +308,14 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     discord_webhook_url: str = ""
 
-    # Kalshi
+    # Kalshi.  Either KALSHI_PRIVATE_KEY (PEM contents) or
+    # KALSHI_PRIVATE_KEY_PATH (path on disk) works. If both are
+    # provided, the explicit path wins. The PEM-contents path is what
+    # the 1Password-driven workflow uses: the secret stays in the
+    # password manager, and the bot materialises it to a per-process
+    # tempfile (mode 0600, atexit-cleaned) at Settings init.
     kalshi_api_key: str = ""
+    kalshi_private_key: str = ""
     kalshi_private_key_path: str = ""
 
     # Crypto.com
@@ -254,22 +334,54 @@ class Settings(BaseSettings):
     polygon_rpc_url: str = "https://polygon-bor-rpc.publicnode.com"
 
     # Sub-configs
-    execution: ExecutionConfig = Field(default_factory=lambda: ExecutionConfig(**_DEFAULTS.get("execution", {})))
-    risk: RiskConfig = Field(default_factory=lambda: RiskConfig(**_DEFAULTS.get("risk", {})))
-    kelly: KellyConfig = Field(default_factory=lambda: KellyConfig(**_DEFAULTS.get("kelly", {})))
-    intervals: IntervalsConfig = Field(default_factory=lambda: IntervalsConfig(**_DEFAULTS.get("intervals", {})))
-    nlp: NLPConfig = Field(default_factory=lambda: NLPConfig(**_DEFAULTS.get("nlp", {})))
-    calibration: CalibrationConfig = Field(default_factory=lambda: CalibrationConfig(**_DEFAULTS.get("calibration", {})))
-    broker: BrokerConfig = Field(default_factory=lambda: BrokerConfig(**_DEFAULTS.get("broker", {})))
-    kalshi: KalshiConfig = Field(default_factory=lambda: KalshiConfig(**_DEFAULTS.get("kalshi", {})))
-    ibkr: IBKRConfig = Field(default_factory=lambda: IBKRConfig(**_DEFAULTS.get("ibkr", {})))
-    cryptodotcom: CryptoComConfig = Field(default_factory=lambda: CryptoComConfig(**_DEFAULTS.get("cryptodotcom", {})))
-    ensemble: EnsembleConfig = Field(default_factory=lambda: EnsembleConfig(**_DEFAULTS.get("ensemble", {})))
-    llm_ensemble: LLMEnsembleConfig = Field(default_factory=lambda: LLMEnsembleConfig(**_DEFAULTS.get("llm_ensemble", {})))
-    market_maker: MarketMakerConfig = Field(default_factory=lambda: MarketMakerConfig(**_DEFAULTS.get("market_maker", {})))
-    arbitrage: ArbitrageConfig = Field(default_factory=lambda: ArbitrageConfig(**_DEFAULTS.get("arbitrage", {})))
-    analysis: AnalysisConfig = Field(default_factory=lambda: AnalysisConfig(**_DEFAULTS.get("analysis", {})))
-    logging: LoggingConfig = Field(default_factory=lambda: LoggingConfig(**_DEFAULTS.get("logging", {})))
+    execution: ExecutionConfig = Field(
+        default_factory=lambda: ExecutionConfig(**_DEFAULTS.get("execution", {}))
+    )
+    risk: RiskConfig = Field(
+        default_factory=lambda: RiskConfig(**_DEFAULTS.get("risk", {}))
+    )
+    kelly: KellyConfig = Field(
+        default_factory=lambda: KellyConfig(**_DEFAULTS.get("kelly", {}))
+    )
+    intervals: IntervalsConfig = Field(
+        default_factory=lambda: IntervalsConfig(**_DEFAULTS.get("intervals", {}))
+    )
+    nlp: NLPConfig = Field(
+        default_factory=lambda: NLPConfig(**_DEFAULTS.get("nlp", {}))
+    )
+    calibration: CalibrationConfig = Field(
+        default_factory=lambda: CalibrationConfig(**_DEFAULTS.get("calibration", {}))
+    )
+    broker: BrokerConfig = Field(
+        default_factory=lambda: BrokerConfig(**_DEFAULTS.get("broker", {}))
+    )
+    kalshi: KalshiConfig = Field(
+        default_factory=lambda: KalshiConfig(**_DEFAULTS.get("kalshi", {}))
+    )
+    ibkr: IBKRConfig = Field(
+        default_factory=lambda: IBKRConfig(**_DEFAULTS.get("ibkr", {}))
+    )
+    cryptodotcom: CryptoComConfig = Field(
+        default_factory=lambda: CryptoComConfig(**_DEFAULTS.get("cryptodotcom", {}))
+    )
+    ensemble: EnsembleConfig = Field(
+        default_factory=lambda: EnsembleConfig(**_DEFAULTS.get("ensemble", {}))
+    )
+    llm_ensemble: LLMEnsembleConfig = Field(
+        default_factory=lambda: LLMEnsembleConfig(**_DEFAULTS.get("llm_ensemble", {}))
+    )
+    market_maker: MarketMakerConfig = Field(
+        default_factory=lambda: MarketMakerConfig(**_DEFAULTS.get("market_maker", {}))
+    )
+    arbitrage: ArbitrageConfig = Field(
+        default_factory=lambda: ArbitrageConfig(**_DEFAULTS.get("arbitrage", {}))
+    )
+    analysis: AnalysisConfig = Field(
+        default_factory=lambda: AnalysisConfig(**_DEFAULTS.get("analysis", {}))
+    )
+    logging: LoggingConfig = Field(
+        default_factory=lambda: LoggingConfig(**_DEFAULTS.get("logging", {}))
+    )
 
     # Resolve .env to an absolute path anchored at the repo root so Settings
     # loads the same secrets regardless of the caller's CWD. A bare ".env"
@@ -280,6 +392,16 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
     }
 
+    @model_validator(mode="after")
+    def _materialise_kalshi_private_key(self):
+        """If KALSHI_PRIVATE_KEY (PEM contents) is set and no explicit
+        path is provided, write it to a tempfile and use that path."""
+        if self.kalshi_private_key and not self.kalshi_private_key_path:
+            self.kalshi_private_key_path = _materialise_kalshi_pem(
+                self.kalshi_private_key
+            )
+        return self
+
     @property
     def kill_switch_active(self) -> bool:
         return Path("KILL_SWITCH").exists()
@@ -287,4 +409,6 @@ class Settings(BaseSettings):
     @property
     def is_live(self) -> bool:
         """All three gates must be true for live trading."""
-        return self.auramaur_live and self.execution.live and not self.kill_switch_active
+        return (
+            self.auramaur_live and self.execution.live and not self.kill_switch_active
+        )

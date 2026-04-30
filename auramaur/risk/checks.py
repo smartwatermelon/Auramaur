@@ -21,6 +21,7 @@ class CheckResult(BaseModel):
 # 1. Kill switch
 # ---------------------------------------------------------------------------
 
+
 async def check_kill_switch() -> CheckResult:
     """Fail if KILL_SWITCH file exists on disk."""
     active = Path("KILL_SWITCH").exists()
@@ -35,13 +36,20 @@ async def check_kill_switch() -> CheckResult:
 # 2. Max drawdown
 # ---------------------------------------------------------------------------
 
-async def check_max_drawdown(current_drawdown: float, max_pct: float = 15.0) -> CheckResult:
+
+async def check_max_drawdown(
+    current_drawdown: float, max_pct: float = 15.0
+) -> CheckResult:
     """Fail if current drawdown exceeds the maximum allowed percentage."""
     exceeded = current_drawdown >= max_pct
     return CheckResult(
         name="max_drawdown",
         passed=not exceeded,
-        reason=f"Drawdown {current_drawdown:.1f}% exceeds limit {max_pct:.1f}%" if exceeded else "",
+        reason=(
+            f"Drawdown {current_drawdown:.1f}% exceeds limit {max_pct:.1f}%"
+            if exceeded
+            else ""
+        ),
         value=current_drawdown,
     )
 
@@ -57,7 +65,9 @@ _HEAT_THRESHOLDS: list[tuple[float, str]] = [
 ]
 
 
-async def check_drawdown_heat(current_drawdown: float, max_pct: float = 15.0) -> CheckResult:
+async def check_drawdown_heat(
+    current_drawdown: float, max_pct: float = 15.0
+) -> CheckResult:
     """Return a heat level based on drawdown. Fails at RED (>=13% of max)."""
     heat = "RED"
     for threshold, level in _HEAT_THRESHOLDS:
@@ -78,13 +88,20 @@ async def check_drawdown_heat(current_drawdown: float, max_pct: float = 15.0) ->
 # 4. Max stake
 # ---------------------------------------------------------------------------
 
-async def check_max_stake(proposed_stake: float, max_stake: float = 25.0) -> CheckResult:
+
+async def check_max_stake(
+    proposed_stake: float, max_stake: float = 25.0
+) -> CheckResult:
     """Fail if proposed stake exceeds the per-market limit."""
     exceeded = proposed_stake > max_stake
     return CheckResult(
         name="max_stake",
         passed=not exceeded,
-        reason=f"Stake ${proposed_stake:.2f} exceeds limit ${max_stake:.2f}" if exceeded else "",
+        reason=(
+            f"Stake ${proposed_stake:.2f} exceeds limit ${max_stake:.2f}"
+            if exceeded
+            else ""
+        ),
         value=proposed_stake,
     )
 
@@ -93,13 +110,18 @@ async def check_max_stake(proposed_stake: float, max_stake: float = 25.0) -> Che
 # 5. Daily loss
 # ---------------------------------------------------------------------------
 
+
 async def check_daily_loss(daily_loss: float, limit: float = 200.0) -> CheckResult:
     """Fail if cumulative daily loss exceeds the limit."""
     exceeded = daily_loss >= limit
     return CheckResult(
         name="daily_loss",
         passed=not exceeded,
-        reason=f"Daily loss ${daily_loss:.2f} exceeds limit ${limit:.2f}" if exceeded else "",
+        reason=(
+            f"Daily loss ${daily_loss:.2f} exceeds limit ${limit:.2f}"
+            if exceeded
+            else ""
+        ),
         value=daily_loss,
     )
 
@@ -108,13 +130,16 @@ async def check_daily_loss(daily_loss: float, limit: float = 200.0) -> CheckResu
 # 6. Max positions
 # ---------------------------------------------------------------------------
 
+
 async def check_max_positions(open_count: int, max_positions: int = 15) -> CheckResult:
     """Fail if the number of open positions is at the limit."""
     at_limit = open_count >= max_positions
     return CheckResult(
         name="max_positions",
         passed=not at_limit,
-        reason=f"{open_count} open positions (limit {max_positions})" if at_limit else "",
+        reason=(
+            f"{open_count} open positions (limit {max_positions})" if at_limit else ""
+        ),
         value=open_count,
     )
 
@@ -123,13 +148,16 @@ async def check_max_positions(open_count: int, max_positions: int = 15) -> Check
 # 7. Min edge
 # ---------------------------------------------------------------------------
 
+
 async def check_min_edge(edge: float, min_edge_pct: float = 5.0) -> CheckResult:
     """Fail if the estimated edge is below the minimum threshold."""
     too_small = abs(edge) < min_edge_pct
     return CheckResult(
         name="min_edge",
         passed=not too_small,
-        reason=f"Edge {edge:.2f}% below minimum {min_edge_pct:.1f}%" if too_small else "",
+        reason=(
+            f"Edge {edge:.2f}% below minimum {min_edge_pct:.1f}%" if too_small else ""
+        ),
         value=edge,
     )
 
@@ -138,13 +166,20 @@ async def check_min_edge(edge: float, min_edge_pct: float = 5.0) -> CheckResult:
 # 8. Min liquidity
 # ---------------------------------------------------------------------------
 
-async def check_min_liquidity(liquidity: float, min_liquidity: float = 1000.0) -> CheckResult:
+
+async def check_min_liquidity(
+    liquidity: float, min_liquidity: float = 1000.0
+) -> CheckResult:
     """Fail if market liquidity is too thin."""
     too_thin = liquidity < min_liquidity
     return CheckResult(
         name="min_liquidity",
         passed=not too_thin,
-        reason=f"Liquidity ${liquidity:.0f} below minimum ${min_liquidity:.0f}" if too_thin else "",
+        reason=(
+            f"Liquidity ${liquidity:.0f} below minimum ${min_liquidity:.0f}"
+            if too_thin
+            else ""
+        ),
         value=liquidity,
     )
 
@@ -153,13 +188,18 @@ async def check_min_liquidity(liquidity: float, min_liquidity: float = 1000.0) -
 # 9. Max spread
 # ---------------------------------------------------------------------------
 
+
 async def check_max_spread(spread: float, max_spread_pct: float = 5.0) -> CheckResult:
     """Fail if the bid-ask spread is too wide."""
     too_wide = spread > max_spread_pct
     return CheckResult(
         name="max_spread",
         passed=not too_wide,
-        reason=f"Spread {spread:.2f}% exceeds limit {max_spread_pct:.1f}%" if too_wide else "",
+        reason=(
+            f"Spread {spread:.2f}% exceeds limit {max_spread_pct:.1f}%"
+            if too_wide
+            else ""
+        ),
         value=spread,
     )
 
@@ -196,6 +236,7 @@ async def check_confidence_floor(
 # 11. Implied probability bounds
 # ---------------------------------------------------------------------------
 
+
 async def check_implied_prob_bounds(
     market_prob: float, min_p: float = 0.05, max_p: float = 0.95
 ) -> CheckResult:
@@ -216,6 +257,7 @@ async def check_implied_prob_bounds(
 # ---------------------------------------------------------------------------
 # 12. Category exposure
 # ---------------------------------------------------------------------------
+
 
 async def check_category_exposure(
     category: str, category_exposure: float, cap_pct: float = 30.0
@@ -238,8 +280,11 @@ async def check_category_exposure(
 # 13. Correlation
 # ---------------------------------------------------------------------------
 
+
 async def check_correlation(
-    market_id: str, correlation_score: float, max_correlated: int = 5,
+    market_id: str,
+    correlation_score: float,
+    max_correlated: int = 5,
 ) -> CheckResult:
     """Fail if weighted correlation score exceeds *max_correlated*.
 
@@ -264,19 +309,38 @@ async def check_correlation(
 # 14. Time to resolution
 # ---------------------------------------------------------------------------
 
+
 async def check_time_to_resolution(
-    hours_remaining: float, min_hours: float = 24
+    hours_remaining: float, min_hours: float = 24, max_hours: float = 0.0
 ) -> CheckResult:
-    """Fail if the market is resolving too soon."""
-    too_soon = hours_remaining < min_hours
+    """Fail if the market resolves too soon OR too far in the future.
+
+    max_hours=0 disables the ceiling (default — no upper bound).
+    Pass float('inf') for hours_remaining when end_date is unknown; that
+    fails the ceiling check so markets with no resolution date are rejected
+    when a ceiling is configured.
+    """
+    if hours_remaining < min_hours:
+        return CheckResult(
+            name="time_to_resolution",
+            passed=False,
+            reason=f"{hours_remaining:.1f}h to resolution (minimum {min_hours:.0f}h)",
+            value=hours_remaining,
+        )
+    if max_hours > 0 and hours_remaining > max_hours:
+        days = hours_remaining / 24.0
+        max_days = max_hours / 24.0
+        label = f">{days:.0f}d" if days < 1e9 else "unknown"
+        return CheckResult(
+            name="time_to_resolution",
+            passed=False,
+            reason=f"resolves {label} away (maximum {max_days:.0f}d)",
+            value=hours_remaining,
+        )
     return CheckResult(
         name="time_to_resolution",
-        passed=not too_soon,
-        reason=(
-            f"{hours_remaining:.1f}h to resolution (minimum {min_hours:.0f}h)"
-            if too_soon
-            else ""
-        ),
+        passed=True,
+        reason="",
         value=hours_remaining,
     )
 
@@ -285,12 +349,18 @@ async def check_time_to_resolution(
 # 15. Second opinion divergence
 # ---------------------------------------------------------------------------
 
+
 async def check_second_opinion_divergence(
     divergence: float | None, max_divergence: float = 0.15
 ) -> CheckResult:
     """Fail if the two model opinions are too far apart."""
     if divergence is None:
-        return CheckResult(name="second_opinion_divergence", passed=True, reason="No second opinion", value=None)
+        return CheckResult(
+            name="second_opinion_divergence",
+            passed=True,
+            reason="No second opinion",
+            value=None,
+        )
     too_far = abs(divergence) > max_divergence
     return CheckResult(
         name="second_opinion_divergence",

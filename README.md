@@ -31,8 +31,10 @@ and trades when there's edge after fees.
 ## Quickstart
 
 ```bash
-# Install
-uv sync
+# Install (use --extra dev to also install pytest-asyncio so the test
+# suite actually exercises async code; without it, async tests are
+# silently treated as no-ops)
+uv sync --extra dev
 
 # Configure (copy and fill in)
 cp .env.example .env
