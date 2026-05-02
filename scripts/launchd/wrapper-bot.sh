@@ -16,6 +16,7 @@ REPO="/Volumes/extra-vieille/Workspaces/Auramaur"
 SECRETS="${REPO}/.claude/secrets.op"
 OP="/opt/homebrew/bin/op"
 UV="/opt/homebrew/bin/uv"
+KEYCHAIN="${HOME}/Library/Keychains/auramaur.keychain-db"
 
 log() {
   local _ts
@@ -23,8 +24,29 @@ log() {
   printf '[%s] [auramaur-%s] %s\n' "${_ts}" "${EXCHANGE}" "$*"
 }
 
+unlock_keychain() {
+  if security unlock-keychain -p '' "${KEYCHAIN}" 2>/dev/null; then
+    return 0
+  fi
+  log "WARN: could not unlock keychain at ${KEYCHAIN}; op run will fail"
+  return 0
+}
+
+load_op_token() {
+  local token
+  token=$(security find-generic-password -a auramaur -s op-service-account-token -w "${KEYCHAIN}" 2>/dev/null) || token=""
+  if [[ -z "${token}" ]]; then
+    log "ERROR: could not read op-service-account-token from keychain — run bootstrap-keychain.sh"
+    exit 1
+  fi
+  export OP_SERVICE_ACCOUNT_TOKEN="${token}"
+}
+
+# Keychain: load OP_SERVICE_ACCOUNT_TOKEN so `op run` can authenticate.
+unlock_keychain
+load_op_token
+
 # Preflight: external volume must be mounted.
-# (mirrors the ralph-burndown preflight guard against the USB hang)
 if [[ ! -d "${REPO}" ]]; then
   log "ERROR: repo not found at ${REPO} — external volume not mounted?"
   exit 1
