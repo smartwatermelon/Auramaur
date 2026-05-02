@@ -10,7 +10,7 @@
 # directory, and loads all three agents.
 #
 # Requires: launchctl, the repo on the external volume (for wrappers), and
-# 1Password CLI (op) in PATH (for the bot agents; observability needs neither).
+# the auramaur keychain bootstrapped (for bot agents; observability needs neither).
 
 set -euo pipefail
 
@@ -61,18 +61,18 @@ if [[ "${UNLOAD_ONLY}" == true ]]; then
   exit 0
 fi
 
-# Validate keychain: bot agents need OP_SERVICE_ACCOUNT_TOKEN from keychain.
+# Validate keychain: bot agents need secrets from keychain.
 # Observability does not — warn but don't block if keychain is missing.
 if [[ ! -f "${KEYCHAIN}" ]]; then
   log "WARN: keychain not found at ${KEYCHAIN} — bot agents will fail"
   log "      Run: bash ${REPO}/scripts/bootstrap-keychain.sh"
 else
   security unlock-keychain -p '' "${KEYCHAIN}" 2>/dev/null || true
-  if ! security find-generic-password -a auramaur -s op-service-account-token -w "${KEYCHAIN}" >/dev/null 2>&1; then
-    log "WARN: op-service-account-token not found in keychain — bot agents will fail"
-    log "      Run: echo \"\$OP_SERVICE_ACCOUNT_TOKEN\" | bash ${REPO}/scripts/bootstrap-keychain.sh"
+  if ! security find-generic-password -a auramaur -s KALSHI_API_KEY -w "${KEYCHAIN}" >/dev/null 2>&1; then
+    log "WARN: secrets not found in keychain — bot agents will fail"
+    log "      Run: bash ${REPO}/scripts/bootstrap-keychain.sh"
   else
-    log "Keychain validated: op-service-account-token present"
+    log "Keychain validated: secrets present"
   fi
 fi
 
