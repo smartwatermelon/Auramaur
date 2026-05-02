@@ -19,6 +19,7 @@ PLIST_SRC="${REPO}/scripts/launchagent"
 LA_DIR="${HOME}/Library/LaunchAgents"
 LOG_DIR="${HOME}/Library/Logs/auramaur"
 EXPECTED_HOME="/Users/andrewrich"
+KEYCHAIN="${HOME}/Library/Keychains/auramaur.keychain-db"
 
 AGENTS=(
   com.auramaur.kalshi
@@ -58,6 +59,21 @@ done
 if [[ "${UNLOAD_ONLY}" == true ]]; then
   log "Unload-only mode — exiting without re-loading"
   exit 0
+fi
+
+# Validate keychain: bot agents need OP_SERVICE_ACCOUNT_TOKEN from keychain.
+# Observability does not — warn but don't block if keychain is missing.
+if [[ ! -f "${KEYCHAIN}" ]]; then
+  log "WARN: keychain not found at ${KEYCHAIN} — bot agents will fail"
+  log "      Run: bash ${REPO}/scripts/bootstrap-keychain.sh"
+else
+  security unlock-keychain -p '' "${KEYCHAIN}" 2>/dev/null || true
+  if ! security find-generic-password -a auramaur -s op-service-account-token -w "${KEYCHAIN}" >/dev/null 2>&1; then
+    log "WARN: op-service-account-token not found in keychain — bot agents will fail"
+    log "      Run: echo \"\$OP_SERVICE_ACCOUNT_TOKEN\" | bash ${REPO}/scripts/bootstrap-keychain.sh"
+  else
+    log "Keychain validated: op-service-account-token present"
+  fi
 fi
 
 # Create log directory.
