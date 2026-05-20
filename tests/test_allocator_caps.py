@@ -93,8 +93,8 @@ def test_both_constraints():
     assert total_allocated <= 150.0, f"Expected <= $150, got ${total_allocated}"
 
 
-def test_zero_reserve_disables():
-    """reserve=0 means no floor — all candidates allocate normally."""
+def test_zero_constraints_disabled():
+    """Both reserve=0 and cap=0 disable constraints — existing behavior preserved."""
     allocator = CapitalAllocator(make_settings(reserve_pct=0.0, cycle_pct=0.0))
     candidates = [
         make_candidate(f"mkt_{i}") for i in range(5)
@@ -108,19 +108,48 @@ def test_zero_reserve_disables():
     assert len(result) == 5
 
 
-def test_zero_cap_disables():
-    """cycle_pct=0 means no per-cycle cap — all candidates allocate normally."""
-    allocator = CapitalAllocator(make_settings(reserve_pct=0.0, cycle_pct=0.0))
-    candidates = [
-        make_candidate(f"mkt_{i}") for i in range(5)
-    ]  # 5 × $25 = $125 desired
+def test_already_below_reserve_floor():
+    """When available_capital < reserve floor, nothing should be deployed.
+
+    cash=$100, positions=$400 (equity=$500). Reserve=20% × $500 = $100.
+    Deployable from cash = max(0, $100 - $100) = $0.
+    """
+    positions = [
+        MagicMock(market_id=f"pos_{i}", size=80, current_price=1.0, avg_cost=1.0)
+        for i in range(5)
+    ]
+    # cycle_pct=0.0: isolate reserve floor; per-cycle cap is disabled
+    allocator = CapitalAllocator(make_settings(reserve_pct=20.0, cycle_pct=0.0))
+    candidates = [make_candidate(f"mkt_{i}") for i in range(5)]
+    result = allocator.allocate(
+        candidates, available_capital=100.0, current_positions=positions
+    )
+    total_allocated = sum(c.allocated_size for c in result)
+    assert (
+        total_allocated == 0.0
+    ), f"Expected $0 deployed when already at reserve floor, got ${total_allocated}"
+
+
+def test_reserve_only_active():
+    """reserve=20% active, cycle_pct=0 disabled. Reserve is binding."""
+    allocator = CapitalAllocator(make_settings(reserve_pct=20.0, cycle_pct=0.0))
+    candidates = [make_candidate(f"mkt_{i}") for i in range(20)]
     result = allocator.allocate(
         candidates, available_capital=500.0, current_positions=[]
     )
-    total_allocated = sum(c.allocated_size for c in result)
-    # No constraints — all $125 should be allocated
-    assert total_allocated == 125.0, f"Expected $125, got ${total_allocated}"
-    assert len(result) == 5
+    total = sum(c.allocated_size for c in result)
+    assert total <= 400.0, f"Expected <= $400 (80% of $500), got ${total}"
+
+
+def test_cap_only_active():
+    """cycle_pct=15% active, reserve=0 disabled. Cap is binding."""
+    allocator = CapitalAllocator(make_settings(reserve_pct=0.0, cycle_pct=15.0))
+    candidates = [make_candidate(f"mkt_{i}") for i in range(20)]
+    result = allocator.allocate(
+        candidates, available_capital=500.0, current_positions=[]
+    )
+    total = sum(c.allocated_size for c in result)
+    assert total <= 75.0, f"Expected <= $75 (15% of $500), got ${total}"
 
 
 def test_allocator_logs_constraints():
