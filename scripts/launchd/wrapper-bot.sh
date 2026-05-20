@@ -74,4 +74,5 @@ log "Loading secrets from keychain"
 load_secrets
 log "Starting bot (exchange=${EXCHANGE})"
 
+export PYTHONUNBUFFERED=1
 exec "${VENV_BIN}/auramaur" run --agent --exchange "${EXCHANGE}"
