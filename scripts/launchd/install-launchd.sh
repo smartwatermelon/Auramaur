@@ -9,12 +9,12 @@
 # symlinks plists from the repo into ~/Library/LaunchAgents/, creates the log
 # directory, and loads all three agents.
 #
-# Requires: launchctl, the repo on the external volume (for wrappers), and
-# the auramaur keychain bootstrapped (for bot agents; observability needs neither).
+# Requires: launchctl, the repo at ~/Developer/Auramaur, and the auramaur
+# keychain bootstrapped (for bot agents; observability needs neither).
 
 set -euo pipefail
 
-REPO="/Volumes/extra-vieille/Workspaces/Auramaur"
+REPO="${HOME}/Developer/Auramaur"
 PLIST_SRC="${REPO}/scripts/launchagent"
 LA_DIR="${HOME}/Library/LaunchAgents"
 LOG_DIR="${HOME}/Library/Logs/auramaur"
@@ -44,7 +44,7 @@ if [[ "${HOME}" != "${EXPECTED_HOME}" ]]; then
 fi
 
 if [[ ! -d "${REPO}" ]]; then
-  log "ERROR: repo not found at ${REPO} — external volume not mounted?"
+  log "ERROR: repo not found at ${REPO}"
   exit 1
 fi
 

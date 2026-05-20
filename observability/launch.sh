@@ -5,7 +5,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-DB="${REPO_ROOT}/auramaur.db"
+DB="${AURAMAUR_DB:-}"
+if [[ -z "$DB" ]]; then
+  for candidate in \
+    "${HOME}/Library/Application Support/auramaur/auramaur-polymarket.db" \
+    "${REPO_ROOT}/auramaur-polymarket.db" \
+    "${REPO_ROOT}/auramaur.db"; do
+    if [[ -f "$candidate" ]]; then
+      DB="$candidate"
+      break
+    fi
+  done
+fi
 META="${SCRIPT_DIR}/metadata.yml"
 DASH="${SCRIPT_DIR}/dashboard.py"
 
@@ -19,8 +30,8 @@ case "$MODE" in
     ;;
 esac
 
-if [[ ! -f "$DB" ]]; then
-  echo "DB not found: $DB — run the bot at least once first." >&2
+if [[ -z "$DB" || ! -f "$DB" ]]; then
+  echo "DB not found${DB:+: $DB} — run the bot at least once first, or set AURAMAUR_DB." >&2
   exit 1
 fi
 
