@@ -12,6 +12,7 @@ from auramaur.db.database import Database
 from auramaur.exchange.client import PolymarketClient
 from auramaur.exchange.models import LivePosition, OrderSide, TokenType
 from auramaur.exchange.paper import PaperTrader
+from auramaur.exchange.protocols import MarketDiscovery
 from config.settings import Settings
 
 log = structlog.get_logger()
@@ -44,12 +45,39 @@ class PositionSyncer:
         exchange: PolymarketClient,
         paper: PaperTrader,
         pnl: PnLTracker,
+        discovery: MarketDiscovery | None = None,
     ) -> None:
         self._settings = settings
         self._db = db
         self._exchange = exchange
         self._paper = paper
         self._pnl = pnl
+        self._discovery = discovery
+
+    # ------------------------------------------------------------------
+    # Price refresh
+    # ------------------------------------------------------------------
+
+    async def _refresh_prices(self, positions: list[LivePosition]) -> None:
+        """Fetch fresh prices from discovery for held positions."""
+        if not self._discovery:
+            return
+        for pos in positions:
+            try:
+                market = await self._discovery.get_market(pos.market_id)
+                if not market:
+                    continue
+                fresh = (
+                    market.outcome_no_price
+                    if pos.token == TokenType.NO
+                    else market.outcome_yes_price
+                )
+                if fresh > 0:
+                    pos.current_price = fresh
+            except Exception as e:
+                log.warning(
+                    "sync.price_refresh.error", market_id=pos.market_id, error=str(e)
+                )
 
     # ------------------------------------------------------------------
     # Public API
@@ -145,6 +173,8 @@ class PositionSyncer:
                     ),
                 )
 
+            await self._refresh_prices(positions)
+
             log.info("sync.live.done", positions=len(positions))
 
         except Exception as e:
@@ -199,6 +229,8 @@ class PositionSyncer:
                     category=pos.category,
                 ),
             )
+
+        await self._refresh_prices(positions)
 
         log.info("sync.paper.done", positions=len(positions))
         return positions

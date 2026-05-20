@@ -264,7 +264,12 @@ class AuramaurBot:
             exchanges_map["polymarket"] = exchange
 
             syncer = PositionSyncer(
-                settings=s, db=db, exchange=exchange, paper=paper, pnl=pnl_tracker
+                settings=s,
+                db=db,
+                exchange=exchange,
+                paper=paper,
+                pnl=pnl_tracker,
+                discovery=gamma,
             )
             reconciler = PositionReconciler(exchange=exchange, db=db)
             router = SmartOrderRouter(settings=s, exchange=exchange)
@@ -484,7 +489,12 @@ class AuramaurBot:
             exchange
             if exchange
             else next(
-                (engines[k]._exchange for k in engines if hasattr(engines[k], "_exchange")), None  # type: ignore[attr-defined]
+                (
+                    engines[k]._exchange
+                    for k in engines
+                    if hasattr(engines[k], "_exchange")
+                ),
+                None,  # type: ignore[attr-defined]
             )
         )
 
