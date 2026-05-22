@@ -102,16 +102,18 @@ ensure_container() {
   fi
 
   log_ts "Creating gluetun-vpn container..."
+  # --privileged required: Podman macOS VMs don't expose /dev/net/tun to
+  # unprivileged containers even with --cap-add NET_ADMIN --device flag.
+  # gluetun exits with "open /dev/net/tun: permission denied" without it.
   local run_output
   if ! run_output=$(podman run -d \
     --name gluetun-vpn \
-    --cap-add NET_ADMIN \
-    --device /dev/net/tun:/dev/net/tun \
+    --privileged \
     -p 8888:8888 \
     -e VPN_SERVICE_PROVIDER="private internet access" \
     -e OPENVPN_USER="${PIA_USER}" \
     -e OPENVPN_PASSWORD="${PIA_PASS}" \
-    -e SERVER_REGIONS=Panama \
+    -e SERVER_REGIONS=Netherlands \
     -e HTTPPROXY=on \
     -e HTTPPROXY_STEALTH=on \
     -e HTTPPROXY_LOG=off \

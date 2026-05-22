@@ -188,10 +188,12 @@ if podman container exists "${CONTAINER_NAME}" 2>/dev/null; then
 fi
 
 log "Creating container '${CONTAINER_NAME}'..."
+# --privileged required: Podman macOS VMs don't expose /dev/net/tun to
+# unprivileged containers even with --cap-add NET_ADMIN --device flag.
+# gluetun exits with "open /dev/net/tun: permission denied" without it.
 podman run -d \
   --name "${CONTAINER_NAME}" \
-  --cap-add NET_ADMIN \
-  --device /dev/net/tun:/dev/net/tun \
+  --privileged \
   -p "${PROXY_PORT}:${PROXY_PORT}" \
   --restart unless-stopped \
   --health-cmd "wget -qO- --timeout=5 https://ipinfo.io/ip || exit 1" \
@@ -201,7 +203,7 @@ podman run -d \
   -e VPN_SERVICE_PROVIDER="private internet access" \
   -e OPENVPN_USER="${PIA_USER}" \
   -e OPENVPN_PASSWORD="${PIA_PASS}" \
-  -e SERVER_REGIONS="Panama" \
+  -e SERVER_REGIONS="Netherlands" \
   -e HTTPPROXY="on" \
   -e HTTPPROXY_STEALTH="on" \
   -e HTTPPROXY_LOG="off" \
