@@ -4,13 +4,12 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.auramaur.polymarket</string>
+  <string>com.auramaur.gluetun</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/andrewrich/Library/Application Support/auramaur/scripts/wrapper-bot.sh</string>
-    <string>polymarket</string>
+    <string>/Users/andrewrich/Library/Application Support/auramaur/scripts/wrapper-gluetun.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
@@ -19,21 +18,17 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- Restart on crash (non-zero exit) only. A clean exit — e.g., the
-       KILL_SWITCH file stopping the bot — does NOT trigger a restart.
-       ThrottleInterval prevents tight loops if the bot crashes immediately. -->
+  <!-- Unconditional KeepAlive: the wrapper is a long-running supervisor
+       that should never exit. If it does, restart immediately. -->
   <key>KeepAlive</key>
-  <dict>
-    <key>Crashed</key>
-    <true/>
-  </dict>
+  <true/>
   <key>ThrottleInterval</key>
   <integer>30</integer>
 
   <key>StandardOutPath</key>
-  <string>/Users/andrewrich/Library/Logs/auramaur/polymarket.log</string>
+  <string>/Users/andrewrich/Library/Logs/auramaur/gluetun.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/andrewrich/Library/Logs/auramaur/polymarket.log</string>
+  <string>/Users/andrewrich/Library/Logs/auramaur/gluetun.log</string>
 
   <key>EnvironmentVariables</key>
   <dict>
@@ -41,8 +36,6 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/andrewrich/.local/bin</string>
     <key>HOME</key>
     <string>/Users/andrewrich</string>
-    <key>HTTPS_PROXY</key>
-    <string>http://localhost:8888</string>
   </dict>
 
   <key>ProcessType</key>
