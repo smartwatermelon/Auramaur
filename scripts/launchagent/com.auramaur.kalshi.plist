@@ -9,7 +9,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/andrewrich/Developer/Auramaur/scripts/launchd/wrapper-bot.sh</string>
+    <string>/Users/andrewrich/Library/Application Support/auramaur/scripts/wrapper-bot.sh</string>
     <string>kalshi</string>
   </array>
 
