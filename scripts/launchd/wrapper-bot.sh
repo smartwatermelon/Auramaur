@@ -14,7 +14,11 @@ set -uo pipefail
 
 EXCHANGE="${1:?Usage: wrapper-bot.sh <kalshi|polymarket>}"
 REPO="${HOME}/Developer/Auramaur"
-SECRETS="${REPO}/.claude/secrets.op"
+INTERNAL_SECRETS="${HOME}/Library/Application Support/auramaur/.claude/secrets.op"
+SECRETS="${INTERNAL_SECRETS}"
+if [[ ! -f "${SECRETS}" ]]; then
+  SECRETS="${REPO}/.claude/secrets.op"
+fi
 # Venv on internal disk avoids macOS TCC "Operation not permitted"
 # when launchd-spawned Python reads .venv/pyvenv.cfg on external volumes.
 VENV_BIN="${HOME}/Library/Application Support/auramaur/.venv/bin"
@@ -36,7 +40,19 @@ unlock_keychain() {
 }
 
 load_secrets() {
-  local key ref val
+  local key ref val secrets_content
+  # Read the file with retry — launchd can deliver signals (EINTR)
+  # during open() on external volumes when respawning after a kill.
+  local _try
+  for _try in 1 2 3; do
+    secrets_content="$(cat "${SECRETS}" 2>/dev/null)" && break
+    log "WARN: could not read ${SECRETS} (attempt ${_try}/3), retrying..."
+    sleep 2
+  done
+  if [[ -z "${secrets_content}" ]]; then
+    log "ERROR: could not read ${SECRETS} after 3 attempts"
+    exit 1
+  fi
   while IFS='=' read -r key ref; do
     [[ -z "${key}" || "${key}" == \#* ]] && continue
     ref="${ref#\"}"
@@ -48,7 +64,7 @@ load_secrets() {
       exit 1
     fi
     export "${key}=${val}"
-  done <"${SECRETS}"
+  done <<<"${secrets_content}"
 }
 
 if [[ ! -d "${REPO}" ]]; then
@@ -71,7 +87,12 @@ fi
 
 unlock_keychain
 log "Loading secrets from keychain"
+# Ignore SIGTERM during secret loading — launchd's process management
+# can deliver signals that interrupt the file read (EINTR on the
+# shell redirection), causing secrets to silently not load.
+trap '' TERM
 load_secrets
+trap - TERM
 
 # Per-exchange live-trading gate. AURAMAUR_LIVE is the first of three
 # gates required for real orders (see config/settings.py::is_live).
