@@ -5,7 +5,8 @@
 
 set -uo pipefail
 
-REPO="/Volumes/extra-vieille/Workspaces/Auramaur"
+REPO="${HOME}/Developer/Auramaur"
+DATA_DIR="${HOME}/Library/Application Support/auramaur"
 
 log() {
   local _ts
@@ -14,9 +15,12 @@ log() {
 }
 
 if [[ ! -d "${REPO}" ]]; then
-  log "ERROR: repo not found at ${REPO} — external volume not mounted?"
+  log "ERROR: repo not found at ${REPO}"
   exit 1
 fi
+
+# Point at the exchange-namespaced DB on internal disk
+export AURAMAUR_DB="${DATA_DIR}/auramaur-polymarket.db"
 
 log "Starting observability stack (Datasette :8001, Streamlit :8501)"
 exec "${REPO}/observability/launch.sh" --both

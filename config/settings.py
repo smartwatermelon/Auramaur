@@ -106,6 +106,8 @@ class RiskConfig(BaseModel):
     time_to_resolution_max_days: int = 90  # 0 = no ceiling
     max_correlated_positions: int = 5
     second_opinion_divergence_max: float = 0.15
+    cash_reserve_floor_pct: float = Field(default=20.0, ge=0, le=100)
+    per_cycle_deploy_pct: float = Field(default=15.0, ge=0, le=100)
 
 
 class KellyConfig(BaseModel):

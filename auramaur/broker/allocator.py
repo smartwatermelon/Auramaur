@@ -95,6 +95,29 @@ class CapitalAllocator:
         category_allocated: dict[str, float] = {}
         allocated: list[CandidateTrade] = []
 
+        reserve_pct = self._settings.risk.cash_reserve_floor_pct / 100.0
+        min_reserve = 0.0
+        if reserve_pct > 0:
+            min_reserve = reserve_pct * total_capital
+            remaining_capital = min(
+                remaining_capital, max(0.0, available_capital - min_reserve)
+            )
+
+        cycle_pct = self._settings.risk.per_cycle_deploy_pct / 100.0
+        if cycle_pct > 0:
+            remaining_capital = min(remaining_capital, cycle_pct * total_capital)
+
+        log.info(
+            "allocator.capital_constraints",
+            equity=round(total_capital, 2),
+            available_cash=round(available_capital, 2),
+            reserve_floor=round(min_reserve, 2),
+            cycle_cap=round(
+                cycle_pct * total_capital if cycle_pct > 0 else available_capital, 2
+            ),
+            effective_budget=round(remaining_capital, 2),
+        )
+
         for candidate in ranked:
             market_id = candidate.market.id
             category = candidate.market.category

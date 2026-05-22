@@ -12,7 +12,17 @@ from rich.text import Text
 console = Console()
 
 # Track activity for status line
-_cycle_stats: dict = {"signals": 0, "trades": 0, "filtered": 0, "analyzed": 0, "errors": 0}
+_cycle_stats: dict = {
+    "signals": 0,
+    "trades": 0,
+    "filtered": 0,
+    "analyzed": 0,
+    "errors": 0,
+}
+
+_last_status_key: str = ""
+_status_repeat_count: int = 0
+_REPEAT_THRESHOLD: int = 60
 
 
 def show_banner(mode: str, version: str) -> None:
@@ -24,7 +34,9 @@ def show_banner(mode: str, version: str) -> None:
         banner.append("LIVE", style="bold red")
     else:
         banner.append("PAPER", style="bold green")
-    banner.append(f"  |  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", style="dim")
+    banner.append(
+        f"  |  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", style="dim"
+    )
     console.print(Panel(banner, style="blue"))
 
 
@@ -34,7 +46,9 @@ def show_startup(sources: list[str], balance: float) -> None:
     console.print()
 
 
-def show_scan_results(total: int, candidates: int, filtered: int = 0, exchange: str = "") -> None:
+def show_scan_results(
+    total: int, candidates: int, filtered: int = 0, exchange: str = ""
+) -> None:
     ex = f"[magenta]{exchange}[/] " if exchange else ""
     msg = f"[dim]{_ts()}[/] {ex}Scanned [bold]{total}[/] markets, [cyan]{candidates}[/] candidates"
     if filtered > 0:
@@ -51,16 +65,26 @@ def show_analyzing(question: str, market_id: str) -> None:
 
 def show_evidence(count: int, sources: dict[str, int]) -> None:
     if count == 0:
-        console.print(f"         [yellow]No evidence found[/]")
+        console.print("         [yellow]No evidence found[/]")
     else:
         parts = [f"{s}:{n}" for s, n in sources.items() if n > 0]
-        console.print(f"         [dim]Evidence:[/] [green]{count}[/] items ({', '.join(parts)})")
+        console.print(
+            f"         [dim]Evidence:[/] [green]{count}[/] items ({', '.join(parts)})"
+        )
 
 
-def show_analysis(claude_prob: float, market_prob: float, edge: float,
-                  confidence: str, second_prob: float | None, divergence: float | None) -> None:
+def show_analysis(
+    claude_prob: float,
+    market_prob: float,
+    edge: float,
+    confidence: str,
+    second_prob: float | None,
+    divergence: float | None,
+) -> None:
     edge_color = "green" if edge > 0 else "red"
-    conf_color = {"HIGH": "green", "MEDIUM": "yellow", "LOW": "red"}.get(confidence, "white")
+    conf_color = {"HIGH": "green", "MEDIUM": "yellow", "LOW": "red"}.get(
+        confidence, "white"
+    )
 
     # Show edge direction with arrow
     if edge > 10:
@@ -86,7 +110,9 @@ def show_analysis(claude_prob: float, market_prob: float, edge: float,
     _cycle_stats["signals"] = _cycle_stats.get("signals", 0) + 1
 
 
-def show_risk_decision(approved: bool, reason: str, passed: int, failed: int, size: float = 0) -> None:
+def show_risk_decision(
+    approved: bool, reason: str, passed: int, failed: int, size: float = 0
+) -> None:
     total = passed + failed
     if approved:
         console.print(
@@ -96,10 +122,21 @@ def show_risk_decision(approved: bool, reason: str, passed: int, failed: int, si
     else:
         # Show concise rejection reason
         short_reason = reason.split(";")[0].strip() if ";" in reason else reason
-        console.print(f"         [red]REJECTED[/] ({passed}/{total}) [dim]{short_reason}[/]")
+        console.print(
+            f"         [red]REJECTED[/] ({passed}/{total}) [dim]{short_reason}[/]"
+        )
 
 
-def show_order(status: str, order_id: str, side: str, size: float, price: float, is_paper: bool, exchange: str = "", error_message: str = "") -> None:
+def show_order(
+    status: str,
+    order_id: str,
+    side: str,
+    size: float,
+    price: float,
+    is_paper: bool,
+    exchange: str = "",
+    error_message: str = "",
+) -> None:
     mode = "[green]PAPER[/]" if is_paper else "[bold red]LIVE[/]"
     side_color = "green" if side == "BUY" else "red"
     ex = f"[magenta]{exchange}[/] " if exchange else ""
@@ -129,12 +166,12 @@ def show_order(status: str, order_id: str, side: str, size: float, price: float,
 
 
 def show_order_dropped(market_id: str, reason: str) -> None:
-    console.print(
-        f"         [yellow]DROPPED[/] [dim]{market_id}[/] — {reason}"
-    )
+    console.print(f"         [yellow]DROPPED[/] [dim]{market_id}[/] — {reason}")
 
 
-def show_cycle_summary(signals: int, trades: int, elapsed: float, exchange: str = "") -> None:
+def show_cycle_summary(
+    signals: int, trades: int, elapsed: float, exchange: str = ""
+) -> None:
     trade_color = "green" if trades > 0 else "dim"
     ex = f"[magenta]{exchange}[/] " if exchange else ""
     console.print(
@@ -147,7 +184,21 @@ def show_cycle_summary(signals: int, trades: int, elapsed: float, exchange: str 
     _cycle_stats.update({"signals": 0, "trades": 0, "analyzed": 0})
 
 
-def show_portfolio(balance: float, pnl: float, positions: int, drawdown: float, schedule_mode: str = "") -> None:
+def show_portfolio(
+    balance: float, pnl: float, positions: int, drawdown: float, schedule_mode: str = ""
+) -> None:
+    global _last_status_key, _status_repeat_count
+
+    status_key = f"{balance:.4f}|{pnl:.4f}|{positions}|{drawdown:.2f}|{schedule_mode}"
+    if status_key == _last_status_key:
+        _status_repeat_count += 1
+        if _status_repeat_count >= _REPEAT_THRESHOLD - 1:
+            console.print(f"[dim]  ... repeated {_status_repeat_count} times[/]")
+            _status_repeat_count = 0
+        return
+    _last_status_key = status_key
+    _status_repeat_count = 0
+
     pnl_color = "green" if pnl >= 0 else "red"
 
     # Build a compact but informative status line
@@ -179,7 +230,7 @@ def show_claude_thinking(market_id: str, stage: str = "primary") -> None:
 
 
 def show_cache_hit() -> None:
-    console.print(f"         [dim]Cache hit[/]")
+    console.print("         [dim]Cache hit[/]")
 
 
 def show_source_error(source: str, error: str) -> None:
@@ -193,11 +244,19 @@ def show_error(msg: str) -> None:
 
 def show_api_budget(calls_today: int, budget: int) -> None:
     remaining = budget - calls_today
-    color = "green" if remaining > budget * 0.5 else "yellow" if remaining > budget * 0.2 else "red"
-    console.print(f"[dim]{_ts()}[/] API budget: [{color}]{calls_today}/{budget}[/] calls today ({remaining} remaining)")
+    color = (
+        "green"
+        if remaining > budget * 0.5
+        else "yellow" if remaining > budget * 0.2 else "red"
+    )
+    console.print(
+        f"[dim]{_ts()}[/] API budget: [{color}]{calls_today}/{budget}[/] calls today ({remaining} remaining)"
+    )
 
 
-def show_world_model_update(cycle: int, beliefs: int, patterns: int, themes: list[str]) -> None:
+def show_world_model_update(
+    cycle: int, beliefs: int, patterns: int, themes: list[str]
+) -> None:
     """Show world model update summary."""
     theme_str = ", ".join(themes[:4])
     if len(themes) > 4:
@@ -210,7 +269,9 @@ def show_world_model_update(cycle: int, beliefs: int, patterns: int, themes: lis
         console.print(f"         [dim]Themes: {theme_str}[/]")
 
 
-def show_arb_opportunity(exchange_a: str, exchange_b: str, question: str, spread: float) -> None:
+def show_arb_opportunity(
+    exchange_a: str, exchange_b: str, question: str, spread: float
+) -> None:
     """Show arbitrage opportunity found."""
     q = question[:50] + "..." if len(question) > 50 else question
     console.print(
@@ -240,15 +301,19 @@ def show_category_performance(stats: list[dict]) -> None:
     table.add_column("Kelly", justify="right")
 
     for s in stats:
-        win_rate = f"{s['win_count'] / s['trade_count']:.0%}" if s['trade_count'] > 0 else "N/A"
-        pnl_val = s.get('total_pnl', 0)
+        win_rate = (
+            f"{s['win_count'] / s['trade_count']:.0%}"
+            if s["trade_count"] > 0
+            else "N/A"
+        )
+        pnl_val = s.get("total_pnl", 0)
         pnl_color = "green" if pnl_val >= 0 else "red"
-        mult = s.get('kelly_multiplier', 1.0) or 1.0
+        mult = s.get("kelly_multiplier", 1.0) or 1.0
         mult_color = "green" if mult >= 1.0 else "red"
 
         table.add_row(
-            s['category'],
-            str(s['trade_count']),
+            s["category"],
+            str(s["trade_count"]),
             win_rate,
             f"[{pnl_color}]${pnl_val:+.2f}[/]",
             f"[{mult_color}]{mult:.2f}x[/]",

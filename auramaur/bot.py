@@ -74,25 +74,37 @@ class AuramaurBot:
         ``auramaur_2.db``, ``auramaur_3.db``, etc.
         """
         import fcntl
+        from pathlib import Path
 
-        if self._db_path:
-            # Explicit path — lock it or fail
-            lock_path = f"{self._db_path}.lock"
+        def _lock_or_fail(db_name: str, label: str) -> str:
+            lock_path = Path(f"{db_name}.lock").resolve()
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
             fh = open(lock_path, "w")
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                self._lock_file = fh
-                return self._db_path
             except OSError:
                 fh.close()
                 raise RuntimeError(
-                    f"Database {self._db_path} is already locked by another instance"
+                    f"Database {db_name} is already locked by another {label} instance"
                 )
+            except Exception:
+                fh.close()
+                raise
+            self._lock_file = fh
+            return db_name
+
+        if self._db_path:
+            return _lock_or_fail(self._db_path, "")
+
+        if self._exchange_filter:
+            return _lock_or_fail(
+                f"auramaur-{self._exchange_filter}.db", self._exchange_filter
+            )
 
         # Auto-detect: try auramaur.db, auramaur_2.db, ...
         for i in range(1, 20):
             db_name = "auramaur.db" if i == 1 else f"auramaur_{i}.db"
-            lock_path = f"{db_name}.lock"
+            lock_path = str(Path(f"{db_name}.lock").resolve())
             fh = open(lock_path, "w")
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -252,7 +264,12 @@ class AuramaurBot:
             exchanges_map["polymarket"] = exchange
 
             syncer = PositionSyncer(
-                settings=s, db=db, exchange=exchange, paper=paper, pnl=pnl_tracker
+                settings=s,
+                db=db,
+                exchange=exchange,
+                paper=paper,
+                pnl=pnl_tracker,
+                discovery=gamma,
             )
             reconciler = PositionReconciler(exchange=exchange, db=db)
             router = SmartOrderRouter(settings=s, exchange=exchange)
@@ -472,7 +489,12 @@ class AuramaurBot:
             exchange
             if exchange
             else next(
-                (engines[k]._exchange for k in engines if hasattr(engines[k], "_exchange")), None  # type: ignore[attr-defined]
+                (
+                    engines[k]._exchange
+                    for k in engines
+                    if hasattr(engines[k], "_exchange")
+                ),
+                None,  # type: ignore[attr-defined]
             )
         )
 

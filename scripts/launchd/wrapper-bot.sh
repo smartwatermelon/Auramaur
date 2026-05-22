@@ -13,9 +13,11 @@
 set -uo pipefail
 
 EXCHANGE="${1:?Usage: wrapper-bot.sh <kalshi|polymarket>}"
-REPO="/Volumes/extra-vieille/Workspaces/Auramaur"
+REPO="${HOME}/Developer/Auramaur"
 SECRETS="${REPO}/.claude/secrets.op"
-UV="/opt/homebrew/bin/uv"
+# Venv on internal disk avoids macOS TCC "Operation not permitted"
+# when launchd-spawned Python reads .venv/pyvenv.cfg on external volumes.
+VENV_BIN="${HOME}/Library/Application Support/auramaur/.venv/bin"
 KEYCHAIN="${HOME}/Library/Keychains/auramaur.keychain-db"
 KC_ACCOUNT="auramaur"
 
@@ -49,14 +51,16 @@ load_secrets() {
   done <"${SECRETS}"
 }
 
-# Preflight: external volume must be mounted.
 if [[ ! -d "${REPO}" ]]; then
-  log "ERROR: repo not found at ${REPO} — external volume not mounted?"
+  log "ERROR: repo not found at ${REPO}"
   exit 1
 fi
 
-if [[ ! -x "${UV}" ]]; then
-  log "ERROR: uv not found or not executable at ${UV}"
+if [[ ! -x "${VENV_BIN}/auramaur" ]]; then
+  log "ERROR: launchd venv not found at ${VENV_BIN}/auramaur"
+  log "  One-time setup (creates venv on internal disk for TCC compatibility):"
+  log "    uv venv '${HOME}/Library/Application Support/auramaur/.venv'"
+  log "    uv pip install --python '${VENV_BIN}/python' '${REPO}'"
   exit 1
 fi
 
@@ -70,5 +74,5 @@ log "Loading secrets from keychain"
 load_secrets
 log "Starting bot (exchange=${EXCHANGE})"
 
-exec "${UV}" run --project "${REPO}" \
-  auramaur run --agent --exchange "${EXCHANGE}"
+export PYTHONUNBUFFERED=1
+exec "${VENV_BIN}/auramaur" run --agent --exchange "${EXCHANGE}"

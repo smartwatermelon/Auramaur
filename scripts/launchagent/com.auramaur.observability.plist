@@ -9,11 +9,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Volumes/extra-vieille/Workspaces/Auramaur/scripts/launchd/wrapper-observability.sh</string>
+    <string>/Users/andrewrich/Developer/Auramaur/scripts/launchd/wrapper-observability.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Volumes/extra-vieille/Workspaces/Auramaur</string>
+  <string>/Users/andrewrich/Library/Application Support/auramaur</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -42,8 +42,6 @@
   </dict>
 
   <key>ProcessType</key>
-  <string>Background</string>
-  <key>Nice</key>
-  <integer>5</integer>
+  <string>Standard</string>
 </dict>
 </plist>

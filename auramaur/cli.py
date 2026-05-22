@@ -210,7 +210,13 @@ def main():
     type=click.Choice(["polymarket", "kalshi", "ibkr"]),
     help="Run only a specific exchange (isolated instance)",
 )
-def run(agent: bool, exchange: str | None):
+@click.option(
+    "--db",
+    default=None,
+    type=click.Path(resolve_path=True),
+    help="Explicit database path (takes precedence over --exchange)",
+)
+def run(agent: bool, exchange: str | None, db: str | None):
     """Start the bot."""
     settings = Settings()
 
@@ -224,7 +230,7 @@ def run(agent: bool, exchange: str | None):
         console.print(f"[bold blue]Starting Auramaur bot (exchange: {exchange})...[/]")
     else:
         console.print("[bold blue]Starting Auramaur bot...[/]")
-    bot = AuramaurBot(settings=settings, exchange_filter=exchange)
+    bot = AuramaurBot(settings=settings, db_path=db, exchange_filter=exchange)
     asyncio.run(bot.run())
 
 
