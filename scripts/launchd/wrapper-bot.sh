@@ -81,6 +81,24 @@ case "${EXCHANGE}" in
   *) export AURAMAUR_LIVE=false ;;
 esac
 
+# For polymarket, verify the VPN proxy is reachable before starting.
+# On failure, exit non-zero so launchd restarts us after ThrottleInterval.
+if [[ "${EXCHANGE}" == "polymarket" ]]; then
+  log "Checking gluetun proxy at localhost:8888..."
+  for _attempt in $(seq 1 12); do
+    if curl -sf --proxy http://localhost:8888 --max-time 5 https://ipinfo.io/ip >/dev/null 2>&1; then
+      proxy_ip=$(curl -sf --proxy http://localhost:8888 --max-time 5 https://ipinfo.io/ip)
+      log "Gluetun proxy ready (exit IP: ${proxy_ip})"
+      break
+    fi
+    if [[ "${_attempt}" -eq 12 ]]; then
+      log "ERROR: gluetun proxy not reachable after 60s — aborting"
+      exit 1
+    fi
+    sleep 5
+  done
+fi
+
 log "Starting bot (exchange=${EXCHANGE}, live=${AURAMAUR_LIVE:-false})"
 
 export PYTHONUNBUFFERED=1

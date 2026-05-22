@@ -24,6 +24,7 @@ EXPECTED_HOME="/Users/andrewrich"
 KEYCHAIN="${HOME}/Library/Keychains/auramaur.keychain-db"
 
 AGENTS=(
+  com.auramaur.gluetun
   com.auramaur.kalshi
   com.auramaur.polymarket
   com.auramaur.observability
@@ -85,7 +86,7 @@ log "Log directory: ${LOG_DIR}"
 # Copy wrapper scripts to internal disk (TCC blocks launchd from
 # reading scripts on external volumes — exit code 126).
 mkdir -p "${WRAPPER_DST}"
-for script in wrapper-bot.sh wrapper-observability.sh; do
+for script in wrapper-bot.sh wrapper-observability.sh wrapper-gluetun.sh; do
   src="${WRAPPER_SRC}/${script}"
   if [[ -f "${src}" ]]; then
     cp "${src}" "${WRAPPER_DST}/${script}"
@@ -122,6 +123,23 @@ for label in "${AGENTS[@]}"; do
   log "Loading ${label}"
   launchctl load "${plist}"
 done
+
+# Wait for gluetun proxy to become reachable (Polymarket bot needs it).
+log "Waiting for gluetun proxy on localhost:8888..."
+proxy_ready=false
+for _i in $(seq 1 60); do
+  if curl -sf --proxy http://localhost:8888 --max-time 5 https://ipinfo.io/ip >/dev/null 2>&1; then
+    proxy_ip=$(curl -sf --proxy http://localhost:8888 --max-time 5 https://ipinfo.io/ip)
+    log "Gluetun proxy ready (exit IP: ${proxy_ip})"
+    proxy_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "${proxy_ready}" != true ]]; then
+  log "WARN: gluetun proxy not ready after 5 min — Polymarket bot may fail to connect"
+  log "      The bot wrapper has its own retry loop; it will recover when the proxy comes up."
+fi
 
 log "Done. Check status with: launchctl list | grep auramaur"
 log "Logs: ${LOG_DIR}/"
