@@ -6,8 +6,6 @@ from datetime import datetime, timezone
 from auramaur.nlp.reframer import (
     OptionContract,
     ReframeType,
-    ReframedMarket,
-    TradeMapping,
     reframe_option_as_binary,
     reframe_earnings_binary,
     select_interesting_strikes,
@@ -26,6 +24,7 @@ def _make_option(
     days_to_expiry: int = 30,
 ) -> OptionContract:
     from datetime import timedelta
+
     expiry = datetime.now(timezone.utc) + timedelta(days=days_to_expiry)
     return OptionContract(
         symbol=symbol,
@@ -155,9 +154,9 @@ class TestSelectInterestingStrikes:
 
     def test_filters_bad_expiry(self):
         options = [
-            _make_option(days_to_expiry=3, strike=200),   # Too soon
+            _make_option(days_to_expiry=3, strike=200),  # Too soon
             _make_option(days_to_expiry=120, strike=200),  # Too far
-            _make_option(days_to_expiry=30, strike=200),   # Good
+            _make_option(days_to_expiry=30, strike=200),  # Good
         ]
         selected = select_interesting_strikes(options, 195.0)
         assert len(selected) == 1
@@ -165,8 +164,7 @@ class TestSelectInterestingStrikes:
 
     def test_respects_max_contracts(self):
         options = [
-            _make_option(delta=0.3 + i * 0.05, strike=190 + i * 5)
-            for i in range(20)
+            _make_option(delta=0.3 + i * 0.05, strike=190 + i * 5) for i in range(20)
         ]
         selected = select_interesting_strikes(options, 195.0, max_contracts=5)
         assert len(selected) <= 5

@@ -14,7 +14,6 @@ The RSS feed has been stable for years and is the safest choice.
 from __future__ import annotations
 
 import hashlib
-import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
@@ -100,19 +99,25 @@ class GoogleTrendsSource:
                     news_url = nu
                     break
 
-            body = f"Trending search with {traffic} searches." if traffic else "Trending search."
+            body = (
+                f"Trending search with {traffic} searches."
+                if traffic
+                else "Trending search."
+            )
             if news_title:
                 body += f" Lead article: {news_title}"
 
-            items.append(NewsItem(
-                id=hashlib.md5(f"gtrends:{title}:{pub_raw}".encode()).hexdigest(),
-                source="google_trends",
-                title=f"Trending: {title}",
-                content=body,
-                url=news_url,
-                published_at=published,
-                relevance_score=relevance,
-            ))
+            items.append(
+                NewsItem(
+                    id=hashlib.md5(f"gtrends:{title}:{pub_raw}".encode()).hexdigest(),
+                    source="google_trends",
+                    title=f"Trending: {title}",
+                    content=body,
+                    url=news_url,
+                    published_at=published,
+                    relevance_score=relevance,
+                )
+            )
             if len(items) >= limit:
                 break
 

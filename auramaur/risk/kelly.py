@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import statistics
 
 from auramaur.exchange.models import Confidence
@@ -20,7 +19,7 @@ CONFIDENCE_MULTIPLIERS: dict[Confidence, float] = {
     Confidence.MEDIUM_HIGH: 0.875,
     Confidence.MEDIUM: 0.75,
     Confidence.MEDIUM_LOW: 0.625,
-    Confidence.LOW: 0.5,
+    Confidence.LOW: 0.6,
 }
 
 
@@ -68,6 +67,10 @@ class KellySizer:
         if abs(edge) < 0.001:
             return 0.0
 
+        # Cap edge to ±20% — larger claimed edges are almost always
+        # overconfident and cause outsized bets on phantom signals.
+        edge = max(-0.20, min(0.20, edge))
+
         if edge > 0:
             # BUY YES: geometric Kelly
             # kelly = (q - p) / (p * (1 - p))
@@ -94,7 +97,10 @@ class KellySizer:
             * book_imbalance_mult
             * bankroll
         )
-        return min(size, max_stake)
+        size = min(size, max_stake)
+        if 0 < size < 1.0:
+            return 0.0
+        return size
 
     # ------------------------------------------------------------------
     # Convenience helpers to derive multiplier values from raw inputs

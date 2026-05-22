@@ -10,7 +10,7 @@ import aiohttp
 import feedparser  # type: ignore[import-untyped]
 import structlog
 
-from auramaur.data_sources.base import DataSource, NewsItem
+from auramaur.data_sources.base import NewsItem
 
 logger = structlog.get_logger(__name__)
 
@@ -63,7 +63,9 @@ class RSSSource:
     async def _fetch_feed(self, url: str, query: str, limit: int) -> list[NewsItem]:
         session = await self._get_session()
         try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=15)
+            ) as resp:
                 resp.raise_for_status()
                 body = await resp.text()
         except Exception as e:
@@ -74,10 +76,34 @@ class RSSSource:
         items: list[NewsItem] = []
 
         # Build keyword set from query for fuzzy matching
-        _STOP = {"will", "the", "a", "an", "of", "in", "on", "by", "to", "be", "is", "at", "for", "and", "or", "not", "this", "that", "with"}
+        _STOP = {
+            "will",
+            "the",
+            "a",
+            "an",
+            "of",
+            "in",
+            "on",
+            "by",
+            "to",
+            "be",
+            "is",
+            "at",
+            "for",
+            "and",
+            "or",
+            "not",
+            "this",
+            "that",
+            "with",
+        }
         query_words = set()
         if query:
-            query_words = {w.lower() for w in query.split() if len(w) > 2 and w.lower() not in _STOP}
+            query_words = {
+                w.lower()
+                for w in query.split()
+                if len(w) > 2 and w.lower() not in _STOP
+            }
 
         for entry in feed.entries[:limit]:
             title = entry.get("title", "")

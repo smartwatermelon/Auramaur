@@ -601,7 +601,9 @@ class TradingEngine:
                 )
 
         # 3. Signal detection
-        signal = detect_edge(market, analysis)
+        signal = detect_edge(
+            market, analysis, exchange_fees=self.settings.arbitrage.exchange_fees
+        )
         if signal is None:
             return None
 
@@ -986,8 +988,13 @@ class TradingEngine:
         edge_candidates: list[Market] = []
         filtered_count = 0
 
+        blocked = set(self.settings.risk.blocked_categories)
+
         for m in candidates:
-            # Check performance-based avoid list first
+            if m.category in blocked:
+                filtered_count += 1
+                continue
+            # Check performance-based avoid list
             if m.category in avoid_categories:
                 log.info(
                     "engine.filtered_poor_performance",
@@ -1287,7 +1294,8 @@ class TradingEngine:
         from pathlib import Path
         from auramaur.nlp.strategic import StrategicAnalyzer
         from auramaur.exchange.models import Confidence, Signal, OrderSide
-        from auramaur.strategy.signals import EXCHANGE_FEES
+
+        exchange_fees = self.settings.arbitrage.exchange_fees
 
         # Kill switch check — halt immediately if active
         if Path("KILL_SWITCH").exists():
@@ -1423,7 +1431,7 @@ class TradingEngine:
             if abs(raw_edge) < 0.001:
                 continue
             side = OrderSide.BUY if raw_edge > 0 else OrderSide.SELL
-            fee_rate = EXCHANGE_FEES.get(market.exchange or self.exchange_name, 0.0)
+            fee_rate = exchange_fees.get(market.exchange or self.exchange_name, 0.0)
             edge = abs(raw_edge) - fee_rate
 
             signal = Signal(

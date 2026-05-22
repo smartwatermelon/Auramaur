@@ -1,43 +1,11 @@
-"""Readiness checks — gate trading goes live until all criteria pass.
+"""Readiness checks — gate live trading until all criteria pass.
 
-The eight criteria are documented in `docs/plans/2026-04-28-deployment-plan.md` §4.
-Each criterion produces a CriterionResult with one of three statuses:
+Eight criteria produce a CriterionResult with one of three statuses:
   PASS              — measurable and within threshold
   FAIL              — measurable and outside threshold
   INSUFFICIENT_DATA — not enough samples to evaluate honestly
 
-Overall readiness passes only if every criterion is PASS. INSUFFICIENT_DATA
-counts as not-ready: the bot must accumulate enough resolved trades before
-it can authorize a real-money flip.
-
-Two criteria use proxies because the bot does not currently persist the
-underlying signal:
-
-  cycle_health  — parsed from auramaur.log (structlog JSON-line output).
-                  Has a format-drift canary that fails the criterion if
-                  more than 5% of lines are unparseable, so silent drift
-                  in the log format produces a loud failure rather than
-                  a falsely-clean readiness report.
-
-  data_sources  — proxied by counts in the news_items table grouped by
-                  source. A source that produced items in the 7-day
-                  window but produced zero in the last 24h is flagged as
-                  silent. This is "items produced", not "queries
-                  succeeded" — a real outage where queries hard-fail but
-                  cached items are still in the DB would not be caught.
-
-Both proxies should eventually be replaced by direct instrumentation;
-that is tracked as a future-work finding rather than blocking Phase 1.
-
-Brier scoping note: the `calibration` table does not have an `exchange`
-column (see auramaur/db/models.py — only market_id, predicted_prob,
-actual_outcome, resolved_at, category, created_at). Both Brier
-criteria therefore evaluate the bot's accuracy *globally* across every
-exchange the bot has traded on, regardless of the `exchange` argument
-passed to evaluate_readiness. For Phase 1 (Kalshi only) this is
-equivalent to "Kalshi Brier"; for multi-exchange operation this would
-need a schema migration to add `exchange` to calibration so each Brier
-criterion can be scoped per-exchange. Tracked as a Phase 3+ prereq.
+Overall readiness passes only if every criterion is PASS.
 """
 
 from __future__ import annotations
@@ -80,14 +48,6 @@ class ReadinessReport:
 # Criterion 1 — cycle health (log parsing with format-drift canary)
 # ---------------------------------------------------------------------------
 
-# Patterns considered an "unhandled exception" in the structlog JSON-line
-# output. The renderer is configured in auramaur/monitoring/logger.py with:
-#   structlog.processors.add_log_level
-#   structlog.processors.TimeStamper(fmt="iso")
-#   structlog.processors.format_exc_info
-# This gives every entry a `level` (lowercase), `timestamp` (ISO 8601), and
-# `event` (the structlog event name). Exceptions get an `exception` key
-# from format_exc_info.
 _REQUIRED_KEYS = ("level", "timestamp", "event")
 _ERROR_LEVELS = {"error", "critical"}
 
@@ -97,10 +57,6 @@ def _parse_log_for_errors(
     since: datetime,
     sample_events_to_keep: int,
 ) -> tuple[int, int, int, int, list[str]]:
-    """Synchronous log parser. Returns (total, well_formed, in_window,
-    errors, error_events). Called via asyncio.to_thread from
-    check_cycle_health to avoid blocking the event loop on large logs.
-    """
     total = 0
     well_formed = 0
     in_window = 0
@@ -124,11 +80,7 @@ def _parse_log_for_errors(
             try:
                 ts = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
             except (ValueError, AttributeError):
-                # Timestamp format drifted — count as drift, not as well-formed.
                 continue
-            # Increment well_formed AFTER successful timestamp parse so
-            # the canary at the call site catches timestamp-format drift
-            # too, not just JSON-shape drift.
             well_formed += 1
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
@@ -151,30 +103,13 @@ async def check_cycle_health(
     drift_threshold_pct: float = 5.0,
     sample_events_to_keep: int = 5,
 ) -> CriterionResult:
-    """Parse the structlog JSON-line log for ERROR/CRITICAL entries since `since`.
-
-    Format-drift canary: if more than `drift_threshold_pct` of non-empty
-    lines either fail to JSON-parse, are missing the required keys, or
-    have an unparseable timestamp, the log format has drifted and the
-    parser is unreliable. That returns FAIL with "format drift" as the
-    reason — better to get a loud failure than a quietly-incorrect
-    readiness report.
-
-    Runs the parse loop in a worker thread (asyncio.to_thread) so a
-    large log file does not stall the event loop while readiness is
-    invoked alongside the running bot.
-    """
     if not log_file.exists():
         return CriterionResult(
             name="cycle_health",
             status="INSUFFICIENT_DATA",
             value="—",
             threshold="0 errors",
-            detail=(
-                f"log file not found at {log_file.resolve()} — "
-                "run `auramaur readiness` from the project root, or pass "
-                "an explicit --log-file"
-            ),
+            detail=f"log file not found at {log_file.resolve()}",
         )
 
     import asyncio
@@ -199,10 +134,7 @@ async def check_cycle_health(
             status="FAIL",
             value=f"{drift_pct:.1f}% unparseable",
             threshold=f"≤{drift_threshold_pct:.1f}% unparseable",
-            detail=(
-                "log format has drifted; "
-                "readiness parser may be unreliable — investigate before relying on this criterion"
-            ),
+            detail="log format has drifted; readiness parser may be unreliable",
         )
 
     if errors == 0:
@@ -234,14 +166,6 @@ async def check_data_sources(
     since_24h: datetime,
     since_window: datetime,
 ) -> CriterionResult:
-    """Flag any source that produced items in the window but zero in the
-    last 24 hours.
-
-    Uses the news_items.created_at timestamp (when the bot persisted the
-    item), not published_at (which can be older than the bot's own
-    history). created_at gives a fair "did this source talk to us
-    recently" signal.
-    """
     rows_window = await db.fetchall(
         "SELECT source, COUNT(*) AS n FROM news_items "
         "WHERE created_at >= ? GROUP BY source",
@@ -296,14 +220,6 @@ async def check_pass_rate(
     max_pct: float = 10.0,
     min_samples: int = 30,
 ) -> CriterionResult:
-    """Pass rate = trades / signals over the window.
-
-    Signals are recorded for every analyzed market regardless of risk-gate
-    outcome (engine.py:540 inserts the signal *before* risk evaluation),
-    while trades are recorded only when the gate approves. So the ratio
-    is a faithful "what fraction of analyzed markets did the bot decide
-    to trade".
-    """
     sig_clause = ""
     sig_params: list = [since.isoformat()]
     trade_clause = ""
@@ -352,15 +268,6 @@ async def check_pass_rate(
 
 
 async def _resolved_predictions(db: Database, since: datetime) -> list[dict]:
-    """Calibration entries with paired market_prob from the first signal
-    on that market. Used by both Brier criteria.
-
-    The `predicted_prob IS NOT NULL` clause is defensive: the schema
-    declares the column NOT NULL, so it should always hold, but a
-    silent truncation or future schema migration could violate it.
-    Better to skip the row than to TypeError mid-evaluation and abort
-    the whole readiness report.
-    """
     return await db.fetchall(
         """
         SELECT
@@ -419,12 +326,6 @@ async def check_brier_vs_market(
     threshold: float = 0.02,
     min_samples: int = 30,
 ) -> CriterionResult:
-    """Bot's Brier minus market's Brier on the same resolved events.
-
-    A positive `delta` means market is better (bot worse). We require the
-    bot to be at least `threshold` lower than the market — i.e.
-    market_brier - bot_brier >= threshold.
-    """
     rows = await _resolved_predictions(db, since)
     paired = [r for r in rows if r["market_prob"] is not None]
     if len(paired) < min_samples:
@@ -441,7 +342,7 @@ async def check_brier_vs_market(
     market_brier = sum(
         (r["market_prob"] - r["actual_outcome"]) ** 2 for r in paired
     ) / len(paired)
-    edge = market_brier - bot_brier  # positive = bot better
+    edge = market_brier - bot_brier
     status: Status = "PASS" if edge >= threshold else "FAIL"
     return CriterionResult(
         name="brier_vs_market",
@@ -508,15 +409,6 @@ async def check_pnl_after_fees(
     fee_rate: float,
     min_samples: int = 30,
 ) -> CriterionResult:
-    """Net PnL after applying the exchange's fee on profitable trades.
-
-    Paper trades do not pay real fees, so their stored pnl is gross.
-    `signal.edge` was already computed net of fees (signals.py:182), so
-    by the time a paper trade exists at all the bot has cleared a
-    fee-adjusted edge threshold. Here we apply the fee one more time on
-    realised winning paper PnL so the readiness number reflects what
-    real-money PnL on the actual exchange would have been.
-    """
     clause = ""
     params: list = [since.isoformat()]
     if exchange:
@@ -586,10 +478,6 @@ async def check_divergence(
             n_samples=len(values),
         )
     median = statistics.median(values)
-    # statistics.quantiles(n=100) returns 99 cut points (the n−1
-    # boundaries between n equal-probability intervals). Index 94 is
-    # the 95th percentile. Both quantiles() and median() sort
-    # internally, so no pre-sort needed.
     p95 = statistics.quantiles(values, n=100, method="inclusive")[94]
     median_ok = median <= median_threshold
     p95_ok = p95 <= p95_threshold
@@ -616,12 +504,6 @@ async def evaluate_readiness(
     days: int = 7,
     fee_rate: float | None = None,
 ) -> ReadinessReport:
-    """Run all 8 criteria and return a ReadinessReport.
-
-    `fee_rate` defaults to a conservative 0.07 (Kalshi's rate) if not
-    provided. Phase 1 targets Kalshi so this is the right default; pass
-    a different value when evaluating a different exchange.
-    """
     now = datetime.now(timezone.utc)
     since_window = now - timedelta(days=days)
     since_24h = now - timedelta(hours=24)

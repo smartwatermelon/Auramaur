@@ -183,20 +183,35 @@ class PositionSyncer:
         return positions
 
     async def _get_live_balance(self) -> float:
-        """Query USDC balance from the CLOB API."""
+        """Return spendable pUSD after cancelling stale resting orders.
+
+        Each cycle re-evaluates signals fresh, so old unfilled GTC orders
+        should be cancelled to free locked collateral for new allocations.
+        """
         self._exchange._init_clob_client()
         client = self._exchange._clob_client
         try:
-            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            # Cancel stale resting orders to free locked collateral.
+            # The engine places fresh orders each cycle — stale GTC orders
+            # just lock capital without purpose.
+            try:
+                resp = client.cancel_all()
+                cancelled = resp.get("canceled", []) if isinstance(resp, dict) else []
+                if cancelled:
+                    log.info("sync.balance.cancelled_stale", count=len(cancelled))
+            except Exception as e:
+                log.debug("sync.balance.cancel_error", error=str(e)[:80])
+
+            from py_clob_client_v2 import BalanceAllowanceParams, AssetType
 
             resp = client.get_balance_allowance(
                 BalanceAllowanceParams(
                     asset_type=AssetType.COLLATERAL, signature_type=2
                 )
             )
-            if isinstance(resp, dict):
-                return int(resp.get("balance", 0)) / 1e6
-            return 0.0
+            total = int(resp.get("balance", 0)) / 1e6 if isinstance(resp, dict) else 0.0
+            log.info("sync.balance.computed", available=round(total, 2))
+            return total
         except Exception as e:
             log.error("sync.balance.error", error=str(e))
             return 0.0
@@ -256,7 +271,7 @@ class PositionSyncer:
                 """INSERT INTO portfolio
                    (market_id, exchange, side, size, avg_price, current_price, category, token, token_id, is_paper, updated_at)
                    VALUES (?, 'polymarket', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(market_id) DO UPDATE SET
+                   ON CONFLICT(market_id, is_paper) DO UPDATE SET
                        exchange = excluded.exchange,
                        size = excluded.size,
                        avg_price = excluded.avg_price,
@@ -333,7 +348,7 @@ class PositionSyncer:
                 """INSERT INTO portfolio
                    (market_id, exchange, side, size, avg_price, current_price, category, token, token_id, is_paper, updated_at)
                    VALUES (?, 'polymarket', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(market_id) DO UPDATE SET
+                   ON CONFLICT(market_id, is_paper) DO UPDATE SET
                        exchange = excluded.exchange,
                        side = excluded.side,
                        size = excluded.size,
@@ -438,7 +453,7 @@ class KalshiPositionSyncer:
                    (market_id, exchange, side, size, avg_price, current_price,
                     category, token, token_id, is_paper, updated_at)
                    VALUES (?, 'kalshi', ?, ?, ?, ?, ?, ?, ?, 1, ?)
-                   ON CONFLICT(market_id) DO UPDATE SET
+                   ON CONFLICT(market_id, is_paper) DO UPDATE SET
                        exchange = excluded.exchange,
                        side = excluded.side,
                        size = excluded.size,

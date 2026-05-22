@@ -2,30 +2,67 @@
 
 from __future__ import annotations
 
-import re
 
 # --- Priority patterns: checked first, before keyword scoring ---
 # These categories have distinctive markers that should not fall through
 # to generic keyword matching (e.g. "win" matching politics).
 
 SPORTS_KEYWORDS: list[str] = [
-    "nba", "nfl", "mlb", "soccer", "football", "championship", "super bowl",
-    "world cup", "vs.", "o/u", "spread", "winner", "game", "match", "fc ",
-    "win on 202", "league", "premier", "serie a", "bundesliga", "ligue 1",
-    "eredivisie", "champions league", "europa league", "nhl", "mls",
+    "nba",
+    "nfl",
+    "mlb",
+    "soccer",
+    "football",
+    "championship",
+    "super bowl",
+    "world cup",
+    "vs.",
+    "o/u",
+    "spread",
+    "winner",
+    "game",
+    "match",
+    "fc ",
+    "win on 202",
+    "league",
+    "premier",
+    "serie a",
+    "bundesliga",
+    "ligue 1",
+    "eredivisie",
+    "champions league",
+    "europa league",
+    "nhl",
+    "mls",
 ]
 
 WEATHER_KEYWORDS: list[str] = [
-    "temperature", "°c", "°f", "weather", "forecast", "rain", "snow", "wind",
+    "temperature",
+    "°c",
+    "°f",
+    "weather",
+    "forecast",
+    "rain",
+    "snow",
+    "wind",
 ]
 
 ESPORTS_KEYWORDS: list[str] = [
-    "lol:", "cs2", "dota", "valorant", "esport", "game 1 winner",
-    "game 2 winner", "game 3 winner",
+    "lol:",
+    "cs2",
+    "dota",
+    "valorant",
+    "esport",
+    "game 1 winner",
+    "game 2 winner",
+    "game 3 winner",
 ]
 
 GAMBLING_KEYWORDS: list[str] = [
-    "o/u", "spread:", "moneyline", "over/under",
+    "o/u",
+    "spread:",
+    "moneyline",
+    "over/under",
 ]
 
 # Priority categories — checked in order before the general scoring.
@@ -38,11 +75,52 @@ PRIORITY_CATEGORIES: list[tuple[str, list[str]]] = [
 
 # --- General keyword scoring (used when no priority category matches) ---
 CATEGORY_KEYWORDS: dict[str, list[str]] = {
-    "politics_us": ["president", "congress", "senate", "house", "democrat", "republican", "biden", "trump", "election", "vote", "primary", "gop"],
-    "politics_intl": ["ukraine", "russia", "china", "eu", "nato", "war", "un ", "geopoliti"],
-    "economics": ["gdp", "inflation", "fed ", "interest rate", "unemployment", "recession", "cpi", "jobs report", "treasury"],
+    "politics_us": [
+        "president",
+        "congress",
+        "senate",
+        "house",
+        "democrat",
+        "republican",
+        "biden",
+        "trump",
+        "election",
+        "vote",
+        "primary",
+        "gop",
+    ],
+    "politics_intl": [
+        "ukraine",
+        "russia",
+        "china",
+        "eu",
+        "nato",
+        "war",
+        "un ",
+        "geopoliti",
+    ],
+    "economics": [
+        "gdp",
+        "inflation",
+        "fed ",
+        "interest rate",
+        "unemployment",
+        "recession",
+        "cpi",
+        "jobs report",
+        "treasury",
+    ],
     "crypto": ["bitcoin", "ethereum", "crypto", "btc", "eth", "defi", "nft", "token"],
-    "tech": ["ai ", "artificial intelligence", "openai", "google", "apple", "meta", "microsoft", "tech"],
+    "tech": [
+        "ai ",
+        "artificial intelligence",
+        "openai",
+        "google",
+        "apple",
+        "meta",
+        "microsoft",
+        "tech",
+    ],
     "entertainment": ["oscar", "grammy", "movie", "film", "tv ", "show", "celebrity"],
     "science": ["climate", "nasa", "space", "vaccine", "covid", "health", "fda"],
     "legal": ["supreme court", "lawsuit", "trial", "verdict", "indictment", "ruling"],

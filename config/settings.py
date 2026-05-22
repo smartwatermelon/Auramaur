@@ -108,6 +108,7 @@ class RiskConfig(BaseModel):
     second_opinion_divergence_max: float = 0.15
     cash_reserve_floor_pct: float = Field(default=20.0, ge=0, le=100)
     per_cycle_deploy_pct: float = Field(default=15.0, ge=0, le=100)
+    blocked_categories: list[str] = []
 
 
 class KellyConfig(BaseModel):

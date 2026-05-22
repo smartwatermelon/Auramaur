@@ -16,6 +16,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 6. **Never read `.env` files.** They contain secrets. Use `.env.example` for reference.
 7. **Never force-push to main.**
 
+## Commit Attribution
+
+When making git commits, use `Assisted-by: Claude (Anthropic)` in the commit message body instead of `Co-authored-by`. The human author should always be the sole git author of record.
+
 ## Common commands
 
 ```bash

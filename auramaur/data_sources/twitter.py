@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import structlog
 import tweepy  # type: ignore[import-untyped]
 
-from auramaur.data_sources.base import DataSource, NewsItem
+from auramaur.data_sources.base import NewsItem
 
 logger = structlog.get_logger(__name__)
 
@@ -40,7 +40,9 @@ class TwitterSource:
         items: list[NewsItem] = []
         for tweet in response.data[:limit]:
             item_id = hashlib.sha256(f"twitter:{tweet.id}".encode()).hexdigest()[:16]
-            published_at = tweet.created_at if tweet.created_at else datetime.now(timezone.utc)
+            published_at = (
+                tweet.created_at if tweet.created_at else datetime.now(timezone.utc)
+            )
             items.append(
                 NewsItem(
                     id=item_id,

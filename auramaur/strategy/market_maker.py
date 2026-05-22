@@ -17,7 +17,6 @@ capping max inventory per market.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,7 +28,6 @@ from auramaur.exchange.models import (
     Market,
     Order,
     OrderBook,
-    OrderResult,
     OrderSide,
     OrderType,
     TokenType,
@@ -100,8 +98,12 @@ class MarketMaker:
 
         # State
         self._active_quotes: dict[str, MMQuote] = {}  # market_id -> active quote
-        self._inventory: dict[str, float] = {}  # market_id -> net YES tokens (+ = long YES)
-        self._pending_orders: dict[str, dict] = {}  # order_id -> {market_id, side, size}
+        self._inventory: dict[str, float] = (
+            {}
+        )  # market_id -> net YES tokens (+ = long YES)
+        self._pending_orders: dict[str, dict] = (
+            {}
+        )  # order_id -> {market_id, side, size}
 
     async def run_cycle(self, markets: list[Market]) -> list[dict]:
         """Run one market making cycle.
@@ -150,7 +152,9 @@ class MarketMaker:
             candidates=len(candidates),
             quoted=len(results),
             active_quotes=len(self._active_quotes),
-            inventory_markets=len([v for v in self._inventory.values() if abs(v) > 0.01]),
+            inventory_markets=len(
+                [v for v in self._inventory.values() if abs(v) > 0.01]
+            ),
         )
 
         return results
@@ -408,7 +412,9 @@ class MarketMaker:
         if ask_result.status in ("paper", "filled"):
             self._update_inventory(quote.market_id, "ask", ask_result.filled_size)
 
-        success = bid_result.status not in ("rejected",) and ask_result.status not in ("rejected",)
+        success = bid_result.status not in ("rejected",) and ask_result.status not in (
+            "rejected",
+        )
 
         log.info(
             "market_maker.quote_placed",
@@ -463,14 +469,22 @@ class MarketMaker:
                 try:
                     await self._exchange.cancel_order(quote.bid_order_id)
                 except Exception as e:
-                    log.debug("market_maker.cancel_bid_error", order_id=quote.bid_order_id, error=str(e))
+                    log.debug(
+                        "market_maker.cancel_bid_error",
+                        order_id=quote.bid_order_id,
+                        error=str(e),
+                    )
 
             # Cancel ask leg
             if quote.ask_order_id and not quote.ask_order_id.startswith("PAPER"):
                 try:
                     await self._exchange.cancel_order(quote.ask_order_id)
                 except Exception as e:
-                    log.debug("market_maker.cancel_ask_error", order_id=quote.ask_order_id, error=str(e))
+                    log.debug(
+                        "market_maker.cancel_ask_error",
+                        order_id=quote.ask_order_id,
+                        error=str(e),
+                    )
 
             # Clean up pending order tracking
             self._pending_orders.pop(quote.bid_order_id, None)
@@ -520,14 +534,18 @@ class MarketMaker:
             try:
                 result = await self._exchange.get_order_status(order_id)
                 if result.status == "filled":
-                    self._update_inventory(info["market_id"], info["side"], result.filled_size)
+                    self._update_inventory(
+                        info["market_id"], info["side"], result.filled_size
+                    )
                     completed_ids.append(order_id)
-                    filled.append({
-                        "order_id": order_id,
-                        "market_id": info["market_id"],
-                        "side": info["side"],
-                        "filled_size": result.filled_size,
-                    })
+                    filled.append(
+                        {
+                            "order_id": order_id,
+                            "market_id": info["market_id"],
+                            "side": info["side"],
+                            "filled_size": result.filled_size,
+                        }
+                    )
                     log.info(
                         "market_maker.fill",
                         order_id=order_id,
@@ -538,7 +556,9 @@ class MarketMaker:
                 elif result.status in ("cancelled", "expired", "rejected"):
                     completed_ids.append(order_id)
             except Exception as e:
-                log.debug("market_maker.fill_check_error", order_id=order_id, error=str(e))
+                log.debug(
+                    "market_maker.fill_check_error", order_id=order_id, error=str(e)
+                )
 
         for oid in completed_ids:
             self._pending_orders.pop(oid, None)

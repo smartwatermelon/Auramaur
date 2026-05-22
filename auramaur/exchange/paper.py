@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import random
 import uuid
-from datetime import datetime
 
 import structlog
 
 from auramaur.db.database import Database
-from auramaur.exchange.models import Order, OrderResult, OrderSide, OrderType, Position, TokenType
+from auramaur.exchange.models import Order, OrderResult, OrderSide, Position, TokenType
 
 log = structlog.get_logger()
 
@@ -27,9 +26,7 @@ class PaperTrader:
 
     async def load_state(self) -> None:
         """Load paper trading state from database."""
-        rows = await self.db.fetchall(
-            "SELECT * FROM portfolio WHERE is_paper = 1"
-        )
+        rows = await self.db.fetchall("SELECT * FROM portfolio WHERE is_paper = 1")
         for row in rows:
             token_str = row["token"] if "token" in row.keys() else "YES"
             token_id = row["token_id"] if "token_id" in row.keys() else ""
@@ -51,7 +48,9 @@ class PaperTrader:
         if row:
             self.balance = self.initial_balance + float(row["net"])
 
-        log.info("paper.state_loaded", balance=self.balance, positions=len(self.positions))
+        log.info(
+            "paper.state_loaded", balance=self.balance, positions=len(self.positions)
+        )
 
     async def execute(self, order: Order) -> OrderResult:
         """Simulate order execution."""
@@ -97,16 +96,22 @@ class PaperTrader:
                 size=order.size,
                 avg_price=order.price,
                 current_price=order.price,
-                token=order.token if hasattr(order, 'token') else TokenType.YES,
-                token_id=order.token_id if hasattr(order, 'token_id') else "",
+                token=order.token if hasattr(order, "token") else TokenType.YES,
+                token_id=order.token_id if hasattr(order, "token_id") else "",
             )
 
         # Trade row is written by TradingEngine for every fill (paper/live/limit)
         # so we don't mirror here — doing so would double-count in the `trades` table.
 
         self.trade_count += 1
-        log.info("paper.trade", order_id=order_id, side=order.side.value,
-                 size=order.size, price=order.price, balance=self.balance)
+        log.info(
+            "paper.trade",
+            order_id=order_id,
+            side=order.side.value,
+            size=order.size,
+            price=order.price,
+            balance=self.balance,
+        )
 
         return OrderResult(
             order_id=order_id,
@@ -116,7 +121,6 @@ class PaperTrader:
             filled_price=order.price,
             is_paper=True,
         )
-
 
     async def check_fills(self, current_prices: dict[str, float]) -> list[OrderResult]:
         """Check pending limit orders for simulated fills.
@@ -162,8 +166,13 @@ class PaperTrader:
         """Queue a limit order for later fill checking."""
         order_id = f"PAPER-LMT-{uuid.uuid4().hex[:12]}"
         self.pending_orders.append((order, order_id))
-        log.info("paper.limit_queued", order_id=order_id, side=order.side.value,
-                 price=order.price, size=order.size)
+        log.info(
+            "paper.limit_queued",
+            order_id=order_id,
+            side=order.side.value,
+            price=order.price,
+            size=order.size,
+        )
         return OrderResult(
             order_id=order_id,
             market_id=order.market_id,

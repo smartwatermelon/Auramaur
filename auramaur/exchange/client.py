@@ -7,7 +7,15 @@ from pathlib import Path
 import structlog
 
 from auramaur.exchange.models import (
-    Market, Order, OrderBook, OrderBookLevel, OrderResult, OrderSide, Signal, TokenType,
+    Market,
+    Order,
+    OrderBook,
+    OrderBookLevel,
+    OrderResult,
+    OrderSide,
+    OrderType,
+    Signal,
+    TokenType,
 )
 from auramaur.exchange.paper import PaperTrader
 
@@ -121,9 +129,11 @@ class PolymarketClient:
                     return asset_id
         return None
 
-    def register_market_tokens(self, market_id: str, clob_yes: str, clob_no: str) -> None:
+    def register_market_tokens(
+        self, market_id: str, clob_yes: str, clob_no: str
+    ) -> None:
         """Register the CLOB token IDs for a market so sells can be matched."""
-        if not hasattr(self, '_market_token_map'):
+        if not hasattr(self, "_market_token_map"):
             self._market_token_map: dict[str, set[str]] = {}
         tokens = set()
         if clob_yes:
@@ -142,48 +152,55 @@ class PolymarketClient:
         if self._clob_client is not None:
             return
 
-        from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import ApiCreds
+        from py_clob_client_v2 import ClobClient, ApiCreds
 
         host = "https://clob.polymarket.com"
         chain_id = 137  # Polygon mainnet
 
-        # Polymarket proxy wallet address (Gnosis Safe)
         proxy = self._settings.polymarket_proxy_address
+
+        creds = None
+        if self._settings.polymarket_api_key:
+            creds = ApiCreds(
+                api_key=self._settings.polymarket_api_key,
+                api_secret=self._settings.polymarket_api_secret,
+                api_passphrase=self._settings.polymarket_passphrase,
+            )
 
         self._clob_client = ClobClient(
             host,
-            key=self._settings.polygon_private_key,
             chain_id=chain_id,
+            key=self._settings.polygon_private_key,
+            creds=creds,
             signature_type=2,  # POLY_GNOSIS_SAFE (Polymarket proxy wallet)
             funder=proxy if proxy else None,
         )
 
-        # Derive API creds if we have them
-        if self._settings.polymarket_api_key:
-            self._clob_client.set_api_creds(ApiCreds(
-                api_key=self._settings.polymarket_api_key,
-                api_secret=self._settings.polymarket_api_secret,
-                api_passphrase=self._settings.polymarket_passphrase,
-            ))
-
-        # Approve USDC collateral for buys
+        # Approve pUSD collateral for buys (V2 uses pUSD, not USDC.e)
         try:
-            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            from py_clob_client_v2 import BalanceAllowanceParams, AssetType
+
             self._clob_client.update_balance_allowance(
-                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=2)
+                BalanceAllowanceParams(
+                    asset_type=AssetType.COLLATERAL, signature_type=2
+                )
             )
             log.info("clob_client.collateral_approved")
         except Exception as e:
             log.warning("clob_client.collateral_approval_error", error=str(e))
 
-        # Track which token_ids we've approved for selling
         self._approved_tokens: set[str] = set()
 
-        log.warning("clob_client.initialized", host=host, chain_id=chain_id)
+        log.warning(
+            "clob_client.initialized", host=host, chain_id=chain_id, version="v2"
+        )
 
     def prepare_order(
-        self, signal: Signal, market: Market, position_size: float, is_live: bool,
+        self,
+        signal: Signal,
+        market: Market,
+        position_size: float,
+        is_live: bool,
     ) -> Order | None:
         """Build a Polymarket order from a signal.
 
@@ -198,7 +215,9 @@ class PolymarketClient:
         side = OrderSide.BUY  # Always BUY on Polymarket CLOB
 
         # Resolve CLOB token ID
-        token_id = market.clob_token_yes if token == TokenType.YES else market.clob_token_no
+        token_id = (
+            market.clob_token_yes if token == TokenType.YES else market.clob_token_no
+        )
 
         # Price for the token we're buying
         if token == TokenType.YES:
@@ -301,8 +320,13 @@ class PolymarketClient:
         self._init_clob_client()
 
         try:
-            from py_clob_client.order_builder.constants import BUY, SELL
-            from py_clob_client.clob_types import OrderArgs, BalanceAllowanceParams, AssetType, OrderType as ClobOrderType
+            from py_clob_client_v2.order_builder.constants import BUY, SELL
+            from py_clob_client_v2 import (
+                OrderArgs,
+                BalanceAllowanceParams,
+                AssetType,
+                OrderType as ClobOrderType,
+            )
 
             clob_side = BUY if order.side == OrderSide.BUY else SELL
 
@@ -310,7 +334,10 @@ class PolymarketClient:
                 raise ValueError(f"No CLOB token_id for market {order.market_id}")
 
             # For SELL orders: approve the specific conditional token if not yet approved
-            if order.side == OrderSide.SELL and order.token_id not in self._approved_tokens:
+            if (
+                order.side == OrderSide.SELL
+                and order.token_id not in self._approved_tokens
+            ):
                 try:
                     self._clob_client.update_balance_allowance(
                         BalanceAllowanceParams(
@@ -322,11 +349,12 @@ class PolymarketClient:
                     self._approved_tokens.add(order.token_id)
                     log.info("clob_client.token_approved", token_id=order.token_id[:20])
                 except Exception as e:
-                    log.warning("clob_client.token_approval_failed",
-                                token_id=order.token_id[:20], error=str(e))
+                    log.warning(
+                        "clob_client.token_approval_failed",
+                        token_id=order.token_id[:20],
+                        error=str(e),
+                    )
 
-            # post_only is only meaningful for GTC limit orders. py-clob-client
-            # raises if you pass post_only=True with FOK/market.
             want_post_only = order.post_only and order.order_type == OrderType.LIMIT
             ord_args = OrderArgs(
                 token_id=order.token_id,
@@ -334,23 +362,24 @@ class PolymarketClient:
                 size=order.size,
                 side=clob_side,
             )
-            if want_post_only:
-                # Two-step: build the signed order, then post with post_only=True.
-                signed = self._clob_client.create_order(ord_args)
-                signed_order = self._clob_client.post_order(
-                    signed, orderType=ClobOrderType.GTC, post_only=True
-                )
-            else:
-                signed_order = self._clob_client.create_and_post_order(ord_args)
 
-            order_id = str(signed_order.get("orderID", signed_order.get("id", "unknown")))
+            signed_order = self._submit_clob_order(
+                ord_args,
+                want_post_only,
+                ClobOrderType,
+                order,
+            )
 
-            # Polymarket returns success=False with errorMsg when a post_only
-            # order would have crossed. Surface that as a rejection so callers
-            # can decide whether to re-quote rather than silently believing
-            # the order is resting.
+            order_id = str(
+                signed_order.get("orderID", signed_order.get("id", "unknown"))
+            )
+
             if isinstance(signed_order, dict) and signed_order.get("success") is False:
-                err = str(signed_order.get("errorMsg") or signed_order.get("error") or "post-only rejected")
+                err = str(
+                    signed_order.get("errorMsg")
+                    or signed_order.get("error")
+                    or "post-only rejected"
+                )
                 log.info(
                     "order.post_only_rejected",
                     market_id=order.market_id,
@@ -385,6 +414,14 @@ class PolymarketClient:
                 is_paper=False,
                 error_message=str(e)[:200],
             )
+
+    def _submit_clob_order(self, ord_args, want_post_only, ClobOrderType, order):
+        """Submit order to CLOB via V2 client (has built-in version mismatch retry)."""
+        return self._clob_client.create_and_post_order(
+            ord_args,
+            order_type=ClobOrderType.GTC,
+            post_only=want_post_only,
+        )
 
     async def get_order_status(self, order_id: str) -> OrderResult:
         """Query the CLOB API for the current status of an order.
@@ -457,7 +494,11 @@ class PolymarketClient:
             return 0
         self._init_clob_client()
         try:
-            resp = self._clob_client.cancel_market_orders(asset_id=token_id)
+            from py_clob_client_v2 import OrderMarketCancelParams
+
+            resp = self._clob_client.cancel_market_orders(
+                OrderMarketCancelParams(asset_id=token_id)
+            )
             cancelled = resp.get("canceled", []) if isinstance(resp, dict) else []
             count = len(cancelled) if isinstance(cancelled, list) else 0
             if count:
@@ -503,14 +544,17 @@ class PolymarketClient:
         await self.cancel_order(order_id)
         return OrderResult(
             order_id=order_id,
-            market_id=self._live_pending.pop(order_id, Order(market_id="", side="BUY", size=0, price=0)).market_id,
+            market_id=self._live_pending.pop(
+                order_id, Order(market_id="", side="BUY", size=0, price=0)
+            ).market_id,
             status="cancelled",
             is_paper=False,
         )
 
     async def get_order_book(self, token_id: str) -> OrderBook:
         """Get order book for a token (public, no auth needed)."""
-        from auramaur.exchange.models import OrderBook, OrderBookLevel
+        from auramaur.exchange.models import OrderBook
+
         self._init_clob_client()
         try:
             raw = self._clob_client.get_order_book(token_id)
@@ -519,15 +563,31 @@ class PolymarketClient:
             raw_asks = getattr(raw, "asks", []) or []
             bids = [
                 OrderBookLevel(
-                    price=float(getattr(b, "price", b.get("price", 0)) if isinstance(b, dict) else b.price),
-                    size=float(getattr(b, "size", b.get("size", 0)) if isinstance(b, dict) else b.size),
+                    price=float(
+                        getattr(b, "price", b.get("price", 0))
+                        if isinstance(b, dict)
+                        else b.price
+                    ),
+                    size=float(
+                        getattr(b, "size", b.get("size", 0))
+                        if isinstance(b, dict)
+                        else b.size
+                    ),
                 )
                 for b in raw_bids
             ]
             asks = [
                 OrderBookLevel(
-                    price=float(getattr(a, "price", a.get("price", 0)) if isinstance(a, dict) else a.price),
-                    size=float(getattr(a, "size", a.get("size", 0)) if isinstance(a, dict) else a.size),
+                    price=float(
+                        getattr(a, "price", a.get("price", 0))
+                        if isinstance(a, dict)
+                        else a.price
+                    ),
+                    size=float(
+                        getattr(a, "size", a.get("size", 0))
+                        if isinstance(a, dict)
+                        else a.size
+                    ),
                 )
                 for a in raw_asks
             ]

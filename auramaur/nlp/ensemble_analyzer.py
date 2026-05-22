@@ -7,9 +7,7 @@ then blends their probability estimates weighted by per-model calibration accura
 from __future__ import annotations
 
 import asyncio
-import json
-import re
-from datetime import date, datetime, timezone
+from datetime import date
 
 import structlog
 from pydantic import BaseModel, Field
@@ -99,6 +97,7 @@ class EnsembleAnalyzer:
         # Compute exponentially-decayed Brier scores per model
         # Decay factor: most recent prediction has weight 1.0, 30th-oldest has weight ~0.22
         import math
+
         decay_rate = 0.05  # exp(-0.05 * rank)
         max_window = 30
 
@@ -110,7 +109,11 @@ class EnsembleAnalyzer:
                 continue
 
             if model not in model_scores:
-                model_scores[model] = {"weighted_brier": 0.0, "total_weight": 0.0, "n": 0}
+                model_scores[model] = {
+                    "weighted_brier": 0.0,
+                    "total_weight": 0.0,
+                    "n": 0,
+                }
 
             prob = float(row["probability"])
             actual = int(row["actual_outcome"])
@@ -126,7 +129,11 @@ class EnsembleAnalyzer:
         for model, scores in model_scores.items():
             if scores["n"] < min_samples:
                 continue
-            brier = scores["weighted_brier"] / scores["total_weight"] if scores["total_weight"] > 0 else 0.5
+            brier = (
+                scores["weighted_brier"] / scores["total_weight"]
+                if scores["total_weight"] > 0
+                else 0.5
+            )
             n = scores["n"]
             if brier > 0:
                 raw_weights[model] = 1.0 / brier
@@ -158,7 +165,10 @@ class EnsembleAnalyzer:
                 raw_weights[model] /= total
 
         self._model_weights = raw_weights
-        log.info("ensemble.weights_loaded", weights={m: round(w, 4) for m, w in raw_weights.items()})
+        log.info(
+            "ensemble.weights_loaded",
+            weights={m: round(w, 4) for m, w in raw_weights.items()},
+        )
         return self._model_weights
 
     async def load_model_weights_by_category(self, category: str) -> dict[str, float]:
@@ -258,23 +268,27 @@ class EnsembleAnalyzer:
                     model=model,
                     error=str(result),
                 )
-                model_results.append(ModelResult(
-                    model=model,
-                    probability=0.5,
-                    weight=0.0,
-                    error=str(result),
-                ))
+                model_results.append(
+                    ModelResult(
+                        model=model,
+                        probability=0.5,
+                        weight=0.0,
+                        error=str(result),
+                    )
+                )
             else:
                 weight = weights.get(model, self._settings.llm_ensemble.default_weight)
-                model_results.append(ModelResult(
-                    model=model,
-                    probability=result["probability"],
-                    confidence=result.get("confidence", "MEDIUM"),
-                    reasoning=result.get("reasoning", ""),
-                    key_factors=result.get("key_factors", []),
-                    time_sensitivity=result.get("time_sensitivity", "MEDIUM"),
-                    weight=weight,
-                ))
+                model_results.append(
+                    ModelResult(
+                        model=model,
+                        probability=result["probability"],
+                        confidence=result.get("confidence", "MEDIUM"),
+                        reasoning=result.get("reasoning", ""),
+                        key_factors=result.get("key_factors", []),
+                        time_sensitivity=result.get("time_sensitivity", "MEDIUM"),
+                        weight=weight,
+                    )
+                )
 
         # Blend results
         successful = [mr for mr in model_results if mr.error is None]
@@ -291,7 +305,9 @@ class EnsembleAnalyzer:
 
         # Record per-model predictions for future Brier scoring
         for mr in successful:
-            await self.record_model_prediction(market.id, mr.model, mr.probability, category)
+            await self.record_model_prediction(
+                market.id, mr.model, mr.probability, category
+            )
 
         # Build combined reasoning
         combined_reasoning = self._merge_reasoning(successful)
@@ -325,7 +341,11 @@ class EnsembleAnalyzer:
             blended_prob=round(blended, 4),
             model_probs={mr.model: round(mr.probability, 4) for mr in successful},
             model_weights={mr.model: round(mr.weight, 4) for mr in successful},
-            spread=round(max(mr.probability for mr in successful) - min(mr.probability for mr in successful), 4),
+            spread=round(
+                max(mr.probability for mr in successful)
+                - min(mr.probability for mr in successful),
+                4,
+            ),
         )
 
         return AnalysisResult(
@@ -361,11 +381,17 @@ class EnsembleAnalyzer:
         for attempt in range(1, max_attempts + 1):
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "claude", "-p", prompt,
-                    "--output-format", "text",
-                    "--model", model,
-                    "--effort", "max",
-                    "--max-turns", "1",
+                    "claude",
+                    "-p",
+                    prompt,
+                    "--output-format",
+                    "text",
+                    "--model",
+                    model,
+                    "--effort",
+                    "max",
+                    "--max-turns",
+                    "1",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -376,7 +402,9 @@ class EnsembleAnalyzer:
 
                 if proc.returncode != 0:
                     err_msg = stderr.decode().strip()
-                    raise RuntimeError(f"Claude CLI ({model}) failed (rc={proc.returncode}): {err_msg}")
+                    raise RuntimeError(
+                        f"Claude CLI ({model}) failed (rc={proc.returncode}): {err_msg}"
+                    )
 
                 self._daily_calls += 1
                 log.info(
@@ -442,7 +470,11 @@ class EnsembleAnalyzer:
     # ------------------------------------------------------------------
 
     async def record_model_prediction(
-        self, market_id: str, model: str, prob: float, category: str = "",
+        self,
+        market_id: str,
+        model: str,
+        prob: float,
+        category: str = "",
     ) -> None:
         """Store per-model prediction for later Brier scoring."""
         await self._db.execute(
@@ -493,7 +525,9 @@ class EnsembleAnalyzer:
             stats[model] = {
                 "brier": round(brier, 4),
                 "n": n,
-                "weight": self._model_weights.get(model, self._settings.llm_ensemble.default_weight),
+                "weight": self._model_weights.get(
+                    model, self._settings.llm_ensemble.default_weight
+                ),
             }
 
         return stats

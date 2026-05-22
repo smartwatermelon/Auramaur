@@ -1,6 +1,6 @@
 """SQLite table schemas as SQL strings."""
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 11
 
 TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 
 CREATE TABLE IF NOT EXISTS portfolio (
-    market_id TEXT PRIMARY KEY,
+    market_id TEXT NOT NULL,
     exchange TEXT DEFAULT 'polymarket',
     side TEXT NOT NULL,
     size REAL NOT NULL,
@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS portfolio (
     token_id TEXT DEFAULT '',
     is_paper INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (market_id, is_paper),
     FOREIGN KEY (market_id) REFERENCES markets(id)
 );
 
@@ -183,7 +184,7 @@ CREATE TABLE IF NOT EXISTS fills (
 );
 
 CREATE TABLE IF NOT EXISTS cost_basis (
-    market_id TEXT PRIMARY KEY,
+    market_id TEXT NOT NULL,
     token TEXT NOT NULL DEFAULT 'YES',
     token_id TEXT DEFAULT '',
     size REAL NOT NULL,
@@ -191,7 +192,8 @@ CREATE TABLE IF NOT EXISTS cost_basis (
     total_cost REAL NOT NULL,
     realized_pnl REAL DEFAULT 0,
     is_paper INTEGER NOT NULL DEFAULT 1,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (market_id, is_paper)
 );
 
 CREATE INDEX IF NOT EXISTS idx_price_history_market ON price_history(market_id);

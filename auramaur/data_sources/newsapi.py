@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import datetime, timezone
 
 import aiohttp
 import structlog
 
-from auramaur.data_sources.base import DataSource, NewsItem
+from auramaur.data_sources.base import NewsItem
 
 logger = structlog.get_logger(__name__)
 
 _EVERYTHING_URL = "https://newsapi.org/v2/everything"
+_REQUEST_INTERVAL = 1.5
+_BACKOFF_DELAYS = [2, 5, 15]
 
 
 class NewsAPISource:
@@ -23,11 +26,19 @@ class NewsAPISource:
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
         self._session: aiohttp.ClientSession | None = None
+        self._last_request: float = 0.0
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
+
+    async def _rate_limit(self) -> None:
+        now = asyncio.get_event_loop().time()
+        elapsed = now - self._last_request
+        if elapsed < _REQUEST_INTERVAL:
+            await asyncio.sleep(_REQUEST_INTERVAL - elapsed)
+        self._last_request = asyncio.get_event_loop().time()
 
     async def fetch(self, query: str, limit: int = 20) -> list[NewsItem]:
         """Fetch news articles matching *query* from NewsAPI."""
@@ -38,15 +49,34 @@ class NewsAPISource:
             "sortBy": "publishedAt",
             "apiKey": self._api_key,
         }
-        try:
-            async with session.get(_EVERYTHING_URL, params=params) as resp:
-                if resp.status == 401:
-                    logger.warning("newsapi_unauthorized", hint="Check your NEWSAPI_KEY")
-                    return []
-                resp.raise_for_status()
-                data = await resp.json()
-        except Exception as e:
-            logger.warning("newsapi_fetch_failed", query=query[:50], error=str(e)[:80])
+        data = None
+        for attempt, delay in enumerate(_BACKOFF_DELAYS):
+            try:
+                await self._rate_limit()
+                async with session.get(_EVERYTHING_URL, params=params) as resp:
+                    if resp.status == 401:
+                        logger.warning(
+                            "newsapi_unauthorized", hint="Check your NEWSAPI_KEY"
+                        )
+                        return []
+                    if resp.status == 429:
+                        retry_after = int(resp.headers.get("Retry-After", delay))
+                        logger.warning(
+                            "newsapi_rate_limited",
+                            retry_after=retry_after,
+                            attempt=attempt,
+                        )
+                        await asyncio.sleep(retry_after)
+                        continue
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    break
+            except Exception as e:
+                logger.warning(
+                    "newsapi_fetch_failed", query=query[:50], error=str(e)[:80]
+                )
+                return []
+        if data is None:
             return []
 
         articles = data.get("articles", [])
@@ -57,7 +87,9 @@ class NewsAPISource:
             url = article.get("url") or ""
             published_str = article.get("publishedAt") or ""
             try:
-                published_at = datetime.fromisoformat(published_str.replace("Z", "+00:00"))
+                published_at = datetime.fromisoformat(
+                    published_str.replace("Z", "+00:00")
+                )
             except (ValueError, AttributeError):
                 published_at = datetime.now(timezone.utc)
 

@@ -5,23 +5,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Stub py_clob_client so tests can exercise the live-order path without the
+# Stub py_clob_client_v2 so tests can exercise the live-order path without the
 # optional C-extension package installed.
 _clob_stub = MagicMock()
 _clob_stub.order_builder.constants.BUY = "BUY"
 _clob_stub.order_builder.constants.SELL = "SELL"
 for mod_name in (
-    "py_clob_client",
-    "py_clob_client.client",
-    "py_clob_client.clob_types",
-    "py_clob_client.order_builder",
-    "py_clob_client.order_builder.constants",
+    "py_clob_client_v2",
+    "py_clob_client_v2.client",
+    "py_clob_client_v2.clob_types",
+    "py_clob_client_v2.order_builder",
+    "py_clob_client_v2.order_builder.constants",
 ):
     sys.modules.setdefault(mod_name, _clob_stub)
 
-from auramaur.exchange.client import PolymarketClient
-from auramaur.exchange.models import Order, OrderResult, OrderSide
-from auramaur.exchange.paper import PaperTrader
+from auramaur.exchange.client import PolymarketClient  # noqa: E402
+from auramaur.exchange.models import Order, OrderResult, OrderSide  # noqa: E402
+from auramaur.exchange.paper import PaperTrader  # noqa: E402
 
 
 @pytest.fixture
@@ -99,8 +99,12 @@ async def test_poll_until_terminal_fills(client):
                 order_id=order_id, market_id="m1", status="pending", is_paper=False
             )
         return OrderResult(
-            order_id=order_id, market_id="m1", status="filled",
-            filled_size=10.0, filled_price=0.55, is_paper=False
+            order_id=order_id,
+            market_id="m1",
+            status="filled",
+            filled_size=10.0,
+            filled_price=0.55,
+            is_paper=False,
         )
 
     client.get_order_status = mock_get_status
@@ -109,7 +113,9 @@ async def test_poll_until_terminal_fills(client):
     )
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
-        result = await client.poll_until_terminal("order123", timeout=60, poll_interval=1)
+        result = await client.poll_until_terminal(
+            "order123", timeout=60, poll_interval=1
+        )
     assert result.status == "filled"
     assert "order123" not in client._live_pending
 
@@ -117,6 +123,7 @@ async def test_poll_until_terminal_fills(client):
 @pytest.mark.asyncio
 async def test_poll_timeout_cancels(client):
     """Always pending → cancel called on timeout."""
+
     async def mock_get_status(order_id):
         return OrderResult(
             order_id=order_id, market_id="m1", status="pending", is_paper=False
@@ -134,10 +141,13 @@ async def test_poll_timeout_cancels(client):
     client.cancel_order = mock_cancel
     client._live_pending["order123"] = original_order
 
-    import time
-    with patch("asyncio.sleep", new_callable=AsyncMock), \
-         patch("time.monotonic", side_effect=[0, 0, 0.5, 1.0, 1.5, 999]):
-        result = await client.poll_until_terminal("order123", timeout=1, poll_interval=0.1)
+    with (
+        patch("asyncio.sleep", new_callable=AsyncMock),
+        patch("time.monotonic", side_effect=[0, 0, 0.5, 1.0, 1.5, 999]),
+    ):
+        result = await client.poll_until_terminal(
+            "order123", timeout=1, poll_interval=0.1
+        )
 
     assert result.status == "cancelled"
     assert cancel_called
@@ -151,12 +161,18 @@ async def test_live_order_pending_size_zero(client):
     client._clob_client = mock_clob
 
     order = Order(
-        market_id="m1", token_id="tok1", side=OrderSide.BUY,
-        size=10, price=0.5, dry_run=False
+        market_id="m1",
+        token_id="tok1",
+        side=OrderSide.BUY,
+        size=10,
+        price=0.5,
+        dry_run=False,
     )
 
-    with patch.object(type(client), "_is_live_enabled", return_value=True), \
-         patch("pathlib.Path.exists", return_value=False):
+    with (
+        patch.object(type(client), "_is_live_enabled", return_value=True),
+        patch("pathlib.Path.exists", return_value=False),
+    ):
         result = await client.place_order(order)
 
     assert result.status == "pending"

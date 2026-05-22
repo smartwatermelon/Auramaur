@@ -657,6 +657,7 @@ class AuramaurBot:
         alerts: AlertManager = self._components["alerts"]
         portfolio_tracker: PortfolioTracker = self._components["risk_manager"].portfolio
         interval = self.settings.intervals.portfolio_check_seconds
+        first_tick = True
 
         while self._running:
             try:
@@ -708,10 +709,47 @@ class AuramaurBot:
 
                     all_positions.extend(positions_list)
 
+                seen_ids: set[str] = set()
+                deduped: list = []
+                for pos in all_positions:
+                    if pos.market_id not in seen_ids:
+                        seen_ids.add(pos.market_id)
+                        deduped.append(pos)
+                all_positions = deduped
+
                 total_cash = sum(per_exchange_cash.values())
                 self._last_known_cash = total_cash
                 total_pnl = await pnl_tracker.get_total_pnl(all_positions)
                 poly_cash = per_exchange_cash.get("polymarket", total_cash)
+
+                if first_tick:
+                    first_tick = False
+                    try:
+                        from auramaur.monitoring.display import (
+                            build_category_stats_from_positions,
+                            show_category_performance,
+                        )
+
+                        accuracy_map: dict[str, float | None] = {}
+                        kelly_map: dict[str, float] = {}
+                        category_lookup: dict[str, str] = {}
+                        attributor = self._components.get("attributor")
+                        if attributor:
+                            accuracy_map, kelly_map = (
+                                await attributor.get_accuracy_and_kelly_maps()
+                            )
+                            category_lookup = await attributor.get_category_lookup()
+                        cat_stats = build_category_stats_from_positions(
+                            all_positions,
+                            accuracy_map,
+                            kelly_map,
+                            category_lookup,
+                        )
+                        if cat_stats:
+                            show_category_performance(cat_stats)
+                    except Exception as e:
+                        log.debug("attribution.initial_error", error=str(e))
+
                 show_portfolio(
                     poly_cash,
                     total_pnl,
@@ -803,8 +841,10 @@ class AuramaurBot:
 
         if not token_id:
             try:
+                # _execute_poly_exit only fires for live positions; scope to
+                # is_paper=0 so we can't pick up a stale paper-mode token_id.
                 row = await self._components["db"].fetchone(
-                    "SELECT token_id FROM cost_basis WHERE market_id = ? AND size > 0",
+                    "SELECT token_id FROM cost_basis WHERE market_id = ? AND size > 0 AND is_paper = 0",
                     (pos.market_id,),
                 )
                 if row and row["token_id"]:
@@ -834,7 +874,7 @@ class AuramaurBot:
         # On-chain balance ground truth
         sell_size = pos.size
         try:
-            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            from py_clob_client_v2 import BalanceAllowanceParams, AssetType
 
             exchange._init_clob_client()
             bal = exchange._clob_client.get_balance_allowance(
@@ -1044,16 +1084,18 @@ class AuramaurBot:
             return
 
         while self._running:
+            await asyncio.sleep(3600)
             try:
                 await attributor.compute_kelly_multipliers()
-                stats = await attributor.get_category_stats()
+                stats = await attributor.get_category_summary(
+                    is_live=self.settings.is_live
+                )
                 if stats:
                     from auramaur.monitoring.display import show_category_performance
 
                     show_category_performance(stats)
             except Exception as e:
                 log.error("attribution.error", error=str(e))
-            await asyncio.sleep(3600)  # Every hour
 
     async def _task_performance_feedback(self) -> None:
         """Periodically update per-category calibration stats and Kelly multipliers."""
@@ -1976,12 +2018,15 @@ class AuramaurBot:
                     reconciled = await reconciler.reconcile()
                     positions = reconciler.to_live_positions(reconciled)
 
-                    # Update cost_basis from real fill prices (ground truth)
+                    # Update cost_basis from real fill prices (ground truth).
+                    # This loop only runs in live mode, so we explicitly
+                    # write is_paper=0 and conflict on (market_id, is_paper).
                     for rp in reconciled:
                         await self._components["db"].execute(
-                            """INSERT INTO cost_basis (market_id, token, token_id, size, avg_cost, total_cost, updated_at)
-                               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-                               ON CONFLICT(market_id) DO UPDATE SET
+                            """INSERT INTO cost_basis (market_id, token, token_id, size, avg_cost, total_cost, is_paper, updated_at)
+                               VALUES (?, ?, ?, ?, ?, ?, 0, datetime('now'))
+                               ON CONFLICT(market_id, is_paper) DO UPDATE SET
+                                   token = excluded.token,
                                    token_id = excluded.token_id,
                                    size = excluded.size,
                                    avg_cost = excluded.avg_cost,
@@ -2006,12 +2051,14 @@ class AuramaurBot:
                     if reconciled:
                         live_ids = [rp.market_id for rp in reconciled]
                         placeholders = ",".join("?" * len(live_ids))
+                        # Live-mode reconciliation must only delete live rows;
+                        # paper rows (is_paper=1) live in their own namespace.
                         cb_cur = await self._components["db"].execute(
-                            f"DELETE FROM cost_basis WHERE size > 0 AND market_id NOT IN ({placeholders})",
+                            f"DELETE FROM cost_basis WHERE size > 0 AND is_paper = 0 AND market_id NOT IN ({placeholders})",
                             live_ids,
                         )
                         pf_cur = await self._components["db"].execute(
-                            f"DELETE FROM portfolio WHERE market_id NOT IN ({placeholders})",
+                            f"DELETE FROM portfolio WHERE is_paper = 0 AND market_id NOT IN ({placeholders})",
                             live_ids,
                         )
                         log.info(
@@ -2226,8 +2273,9 @@ class AuramaurBot:
             asyncio.create_task(self._task_recalibrate(), name="recalibrate"),
         ]
 
-        # Portfolio monitor starts if any syncer is available (Polymarket or Kalshi).
-        # position_sync is Polymarket-specific (uses the poly syncer for fills/reconciler).
+        # Portfolio monitor runs whenever any exchange syncer is present so
+        # Kalshi-only runs still populate `_last_known_cash` and exits fire.
+        # Position sync (CLOB reconciler) remains Polymarket-specific.
         if self._components.get("syncers"):
             tasks.append(
                 asyncio.create_task(self._task_portfolio_monitor(), name="portfolio")
