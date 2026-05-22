@@ -325,6 +325,12 @@ class Settings(BaseSettings):
     cryptodotcom_api_key: str = ""
     cryptodotcom_api_secret: str = ""
 
+    # LLM model overrides — env vars AURAMAUR_MODEL / AURAMAUR_TOOL_MODEL.
+    # Empty string means "use defaults.yaml value". Set in launchd plists
+    # so model bumps don't require code changes.
+    auramaur_model: str = ""
+    auramaur_tool_model: str = ""
+
     # Safety
     auramaur_live: bool = False
     # Separate opt-in for on-chain redemption — real Polygon transactions.
@@ -403,6 +409,15 @@ class Settings(BaseSettings):
             self.kalshi_private_key_path = _materialise_kalshi_pem(
                 self.kalshi_private_key
             )
+        return self
+
+    @model_validator(mode="after")
+    def _apply_model_overrides(self):
+        """Env vars AURAMAUR_MODEL / AURAMAUR_TOOL_MODEL override YAML defaults."""
+        if self.auramaur_model:
+            self.nlp.model = self.auramaur_model
+        if self.auramaur_tool_model:
+            self.nlp.tool_use_model = self.auramaur_tool_model
         return self
 
     @property

@@ -25,7 +25,7 @@ class CorrelationDetector:
     are slow-moving and Claude CLI calls are expensive.
     """
 
-    def __init__(self, db: Database, model: str = "claude-sonnet-4-20250514") -> None:
+    def __init__(self, db: Database, model: str = "opus") -> None:
         self._db = db
         self._model = model
 
@@ -78,9 +78,13 @@ If no relationships found, return []. Only return the JSON array, no other text.
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                "claude", "-p", prompt,
-                "--output-format", "text",
-                "--model", self._model,
+                "claude",
+                "-p",
+                prompt,
+                "--output-format",
+                "text",
+                "--model",
+                self._model,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -108,7 +112,8 @@ If no relationships found, return []. Only return the JSON array, no other text.
                        (market_id_a, market_id_b, relationship_type, strength, description, detected_at)
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (
-                        rel["market_a"], rel["market_b"],
+                        rel["market_a"],
+                        rel["market_b"],
                         rel.get("type", "correlated"),
                         rel.get("strength", 0.5),
                         rel.get("description", ""),
@@ -156,26 +161,30 @@ If no relationships found, return []. Only return the JSON array, no other text.
             # Conditional violation: if A implies B, then P(A) <= P(B)
             if row["relationship_type"] == "conditional":
                 if price_a > price_b + 0.05:  # 5% threshold
-                    opportunities.append({
-                        "type": "conditional_violation",
-                        "market_a": row["market_id_a"],
-                        "market_b": row["market_id_b"],
-                        "price_a": price_a,
-                        "price_b": price_b,
-                        "description": row["description"],
-                    })
+                    opportunities.append(
+                        {
+                            "type": "conditional_violation",
+                            "market_a": row["market_id_a"],
+                            "market_b": row["market_id_b"],
+                            "price_a": price_a,
+                            "price_b": price_b,
+                            "description": row["description"],
+                        }
+                    )
 
             # Same event: prices should be close
             if row["relationship_type"] == "same_event":
                 if abs(price_a - price_b) > 0.05:
-                    opportunities.append({
-                        "type": "price_divergence",
-                        "market_a": row["market_id_a"],
-                        "market_b": row["market_id_b"],
-                        "price_a": price_a,
-                        "price_b": price_b,
-                        "divergence": abs(price_a - price_b),
-                    })
+                    opportunities.append(
+                        {
+                            "type": "price_divergence",
+                            "market_a": row["market_id_a"],
+                            "market_b": row["market_id_b"],
+                            "price_a": price_a,
+                            "price_b": price_b,
+                            "divergence": abs(price_a - price_b),
+                        }
+                    )
 
         if opportunities:
             log.info("correlation.arbitrage", count=len(opportunities))

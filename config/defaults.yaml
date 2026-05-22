@@ -52,6 +52,7 @@ nlp:
   cache_ttl_breaking_seconds: 900
   cache_ttl_slow_seconds: 7200
   model: "opus"
+  tool_use_model: "claude-opus-4-7"
   max_tokens: 4096
   # API intensity: "low", "medium", or "full_blast"
   # low:        10 markets, 3 evidence, skip second opinion, 50 calls/day

@@ -41,6 +41,10 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/andrewrich/.local/bin</string>
     <key>HOME</key>
     <string>/Users/andrewrich</string>
+    <key>AURAMAUR_MODEL</key>
+    <string>opus</string>
+    <key>AURAMAUR_TOOL_MODEL</key>
+    <string>claude-opus-4-7</string>
   </dict>
 
   <key>ProcessType</key>
