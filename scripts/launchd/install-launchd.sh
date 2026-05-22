@@ -98,6 +98,38 @@ for script in wrapper-bot.sh wrapper-observability.sh wrapper-gluetun.sh; do
   fi
 done
 
+# Copy secrets.op to internal disk (EINTR resilience — launchd can
+# deliver SIGTERM during file I/O on external volumes).
+SECRETS_SRC="${REPO}/.claude/secrets.op"
+SECRETS_DST="${HOME}/Library/Application Support/auramaur/.claude/secrets.op"
+if [[ -f "${SECRETS_SRC}" ]]; then
+  mkdir -p "$(dirname "${SECRETS_DST}")" || {
+    log "ERROR: failed to create secrets directory"
+    exit 1
+  }
+  chmod 700 "$(dirname "${SECRETS_DST}")" || {
+    log "ERROR: failed to set permissions on secrets directory"
+    exit 1
+  }
+  if [[ -f "${SECRETS_DST}" ]]; then
+    chmod u+w "${SECRETS_DST}" || {
+      log "ERROR: cannot chmod secrets.op"
+      exit 1
+    }
+  fi
+  cp "${SECRETS_SRC}" "${SECRETS_DST}" || {
+    log "ERROR: failed to copy secrets.op"
+    exit 1
+  }
+  chmod 400 "${SECRETS_DST}" || {
+    log "ERROR: failed to set permissions on secrets.op"
+    exit 1
+  }
+  log "Copied secrets.op → $(dirname "${SECRETS_DST}")/"
+else
+  log "WARN: secrets.op not found at ${SECRETS_SRC} — bot agents will use repo copy"
+fi
+
 # Symlink plists into ~/Library/LaunchAgents/.
 mkdir -p "${LA_DIR}"
 for label in "${AGENTS[@]}"; do
