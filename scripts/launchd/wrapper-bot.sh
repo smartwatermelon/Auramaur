@@ -72,7 +72,16 @@ fi
 unlock_keychain
 log "Loading secrets from keychain"
 load_secrets
-log "Starting bot (exchange=${EXCHANGE})"
+
+# Per-exchange live-trading gate. AURAMAUR_LIVE is the first of three
+# gates required for real orders (see config/settings.py::is_live).
+# Exchanges not listed here default to paper mode.
+case "${EXCHANGE}" in
+  kalshi) export AURAMAUR_LIVE=true ;;
+  *) export AURAMAUR_LIVE=false ;;
+esac
+
+log "Starting bot (exchange=${EXCHANGE}, live=${AURAMAUR_LIVE:-false})"
 
 export PYTHONUNBUFFERED=1
 exec "${VENV_BIN}/auramaur" run --agent --exchange "${EXCHANGE}"
