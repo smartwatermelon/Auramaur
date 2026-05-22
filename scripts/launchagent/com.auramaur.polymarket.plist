@@ -43,6 +43,10 @@
     <string>/Users/andrewrich</string>
     <key>HTTPS_PROXY</key>
     <string>http://localhost:8888</string>
+    <key>AURAMAUR_MODEL</key>
+    <string>opus</string>
+    <key>AURAMAUR_TOOL_MODEL</key>
+    <string>claude-opus-4-7</string>
   </dict>
 
   <key>ProcessType</key>
