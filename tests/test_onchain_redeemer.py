@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from eth_account import Account
@@ -130,7 +128,9 @@ def test_ctf_redeem_calldata_encodes_correctly():
     data = r.build_ctf_redeem_calldata(condition_id)
 
     # redeemPositions(address,bytes32,bytes32,uint256[]) selector
-    expected_selector = keccak(text="redeemPositions(address,bytes32,bytes32,uint256[])")[:4]
+    expected_selector = keccak(
+        text="redeemPositions(address,bytes32,bytes32,uint256[])"
+    )[:4]
     assert data[:4] == expected_selector
 
     # Verify the USDC.e address is embedded (first arg)
@@ -179,10 +179,17 @@ def test_safe_tx_hash_matches_eth_account_signing():
 
     # Recompute the hash manually and recover the signer — must match EOA.
     manual_hash = _safe_tx_hash_for_testing(
-        to=to, value=0, data=data, operation=0,
-        safe_tx_gas=0, base_gas=0, gas_price=0,
-        gas_token=ZERO_ADDRESS, refund_receiver=ZERO_ADDRESS,
-        nonce=nonce, safe_address=TEST_SAFE,
+        to=to,
+        value=0,
+        data=data,
+        operation=0,
+        safe_tx_gas=0,
+        base_gas=0,
+        gas_price=0,
+        gas_token=ZERO_ADDRESS,
+        refund_receiver=ZERO_ADDRESS,
+        nonce=nonce,
+        safe_address=TEST_SAFE,
     )
     recovered = Account._recover_hash(manual_hash, signature=signature)
     assert Web3.to_checksum_address(recovered) == Web3.to_checksum_address(TEST_EOA)
@@ -236,17 +243,20 @@ async def test_dry_run_records_built_but_does_not_submit(db):
     real_w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:0"))
     ctf = real_w3.eth.contract(
         address=Web3.to_checksum_address(CTF_ADDRESS),
-        abi=[{
-            "name": "redeemPositions", "type": "function",
-            "stateMutability": "nonpayable",
-            "inputs": [
-                {"name": "collateralToken", "type": "address"},
-                {"name": "parentCollectionId", "type": "bytes32"},
-                {"name": "conditionId", "type": "bytes32"},
-                {"name": "indexSets", "type": "uint256[]"},
-            ],
-            "outputs": [],
-        }],
+        abi=[
+            {
+                "name": "redeemPositions",
+                "type": "function",
+                "stateMutability": "nonpayable",
+                "inputs": [
+                    {"name": "collateralToken", "type": "address"},
+                    {"name": "parentCollectionId", "type": "bytes32"},
+                    {"name": "conditionId", "type": "bytes32"},
+                    {"name": "indexSets", "type": "uint256[]"},
+                ],
+                "outputs": [],
+            }
+        ],
     )
 
     def eth_contract(address, abi):
@@ -299,17 +309,20 @@ async def test_submission_blocked_when_gates_closed(db):
     real_w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:0"))
     ctf = real_w3.eth.contract(
         address=Web3.to_checksum_address(CTF_ADDRESS),
-        abi=[{
-            "name": "redeemPositions", "type": "function",
-            "stateMutability": "nonpayable",
-            "inputs": [
-                {"name": "collateralToken", "type": "address"},
-                {"name": "parentCollectionId", "type": "bytes32"},
-                {"name": "conditionId", "type": "bytes32"},
-                {"name": "indexSets", "type": "uint256[]"},
-            ],
-            "outputs": [],
-        }],
+        abi=[
+            {
+                "name": "redeemPositions",
+                "type": "function",
+                "stateMutability": "nonpayable",
+                "inputs": [
+                    {"name": "collateralToken", "type": "address"},
+                    {"name": "parentCollectionId", "type": "bytes32"},
+                    {"name": "conditionId", "type": "bytes32"},
+                    {"name": "indexSets", "type": "uint256[]"},
+                ],
+                "outputs": [],
+            }
+        ],
     )
 
     def eth_contract(address, abi):

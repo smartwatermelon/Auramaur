@@ -1,7 +1,5 @@
 """Tests for multi-exchange risk enforcement."""
 
-import pytest
-
 from auramaur.exchange.models import Market, Order, OrderSide
 
 
@@ -27,7 +25,9 @@ def test_order_default_exchange():
 
 def test_order_kalshi_exchange():
     """Order model should accept kalshi exchange."""
-    o = Order(market_id="KXTEST", exchange="kalshi", side=OrderSide.BUY, size=10, price=0.5)
+    o = Order(
+        market_id="KXTEST", exchange="kalshi", side=OrderSide.BUY, size=10, price=0.5
+    )
     assert o.exchange == "kalshi"
 
 

@@ -14,7 +14,7 @@ This module:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import structlog
 
@@ -27,13 +27,13 @@ log = structlog.get_logger()
 class ReconciledPosition:
     """A position with all three ID mappings resolved."""
 
-    market_id: str          # Our numeric ID (for DB lookups)
-    condition_id: str       # CLOB condition hash (for market queries)
-    token_id: str           # CLOB asset_id (for placing sell orders)
-    outcome: str            # "Yes" or "No"
-    question: str           # Market question
-    size: float             # Net token balance
-    avg_cost: float = 0.0   # From cost_basis table
+    market_id: str  # Our numeric ID (for DB lookups)
+    condition_id: str  # CLOB condition hash (for market queries)
+    token_id: str  # CLOB asset_id (for placing sell orders)
+    outcome: str  # "Yes" or "No"
+    question: str  # Market question
+    size: float  # Net token balance
+    avg_cost: float = 0.0  # From cost_basis table
     current_price: float = 0.0
 
 
@@ -69,7 +69,9 @@ class PositionReconciler:
             return []
 
         # Step 2: Reconstruct positions from confirmed trades
-        token_positions: dict[str, dict] = {}  # asset_id -> {net, total_cost, condition_id, outcome}
+        token_positions: dict[str, dict] = (
+            {}
+        )  # asset_id -> {net, total_cost, condition_id, outcome}
 
         for t in trades:
             if t.get("status") != "CONFIRMED":
@@ -117,9 +119,7 @@ class PositionReconciler:
                 token_positions[asset_id]["total_cost"] -= size * price
 
         # Filter to non-zero positions
-        active = {
-            k: v for k, v in token_positions.items() if v["net"] > 0.01
-        }
+        active = {k: v for k, v in token_positions.items() if v["net"] > 0.01}
 
         log.info("reconciler.positions_from_trades", total=len(active))
 
@@ -159,16 +159,18 @@ class PositionReconciler:
                 # Fall back to current price — treats the dust as flat P&L.
                 avg_cost = current_price if current_price > 0 else 0.5
 
-            positions.append(ReconciledPosition(
-                market_id=market_id or condition_id[:16],
-                condition_id=condition_id,
-                token_id=asset_id,
-                outcome=pos_data["outcome"],
-                question=question,
-                size=pos_data["net"],
-                avg_cost=avg_cost,
-                current_price=current_price,
-            ))
+            positions.append(
+                ReconciledPosition(
+                    market_id=market_id or condition_id[:16],
+                    condition_id=condition_id,
+                    token_id=asset_id,
+                    outcome=pos_data["outcome"],
+                    question=question,
+                    size=pos_data["net"],
+                    avg_cost=avg_cost,
+                    current_price=current_price,
+                )
+            )
 
             # Register token mapping for sells
             self._exchange.register_market_tokens(
@@ -196,12 +198,18 @@ class PositionReconciler:
                 self._market_cache[condition_id] = info
                 return info
         except Exception as e:
-            log.debug("reconciler.market_lookup_error",
-                      condition_id=condition_id[:20], error=str(e))
+            log.debug(
+                "reconciler.market_lookup_error",
+                condition_id=condition_id[:20],
+                error=str(e),
+            )
         return None
 
     async def _find_market_id(
-        self, condition_id: str, question: str, slug: str,
+        self,
+        condition_id: str,
+        question: str,
+        slug: str,
     ) -> str | None:
         """Match a CLOB condition_id to our numeric market_id via DB."""
         # Try matching by condition_id
@@ -233,18 +241,26 @@ class PositionReconciler:
         # No match — insert a stub so exits and risk checks can find it
         if question and condition_id:
             from datetime import datetime, timezone
+
             stub_id = condition_id[:16]
             try:
                 await self._db.execute(
                     """INSERT OR IGNORE INTO markets
                        (id, condition_id, question, last_updated)
                        VALUES (?, ?, ?, ?)""",
-                    (stub_id, condition_id, question,
-                     datetime.now(timezone.utc).isoformat()),
+                    (
+                        stub_id,
+                        condition_id,
+                        question,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
                 )
                 await self._db.commit()
-                log.info("reconciler.stub_market_created",
-                         market_id=stub_id, question=question[:60])
+                log.info(
+                    "reconciler.stub_market_created",
+                    market_id=stub_id,
+                    question=question[:60],
+                )
             except Exception:
                 pass
             return stub_id
@@ -253,7 +269,9 @@ class PositionReconciler:
 
     @staticmethod
     def _extract_token_pair(
-        tokens: list[dict], held_asset_id: str, held_outcome: str,
+        tokens: list[dict],
+        held_asset_id: str,
+        held_outcome: str,
     ) -> tuple[str, str]:
         """Extract (clob_yes, clob_no) from CLOB token list."""
         yes_id = ""
@@ -280,34 +298,40 @@ class PositionReconciler:
                 continue  # Still unresolved
 
             orphan_id = pos.condition_id[:16]
-            # Check if cost_basis has the orphan ID
+            # Check if cost_basis has the orphan ID — reconciler is live-only,
+            # so confine the rename to is_paper=0 rows.  cost_basis is keyed
+            # by (market_id, is_paper); without the filter we could rename a
+            # paper row into a key that already exists for live and violate
+            # the composite PK.
             row = await self._db.fetchone(
-                "SELECT market_id FROM cost_basis WHERE market_id = ?",
+                "SELECT market_id FROM cost_basis WHERE market_id = ? AND is_paper = 0",
                 (orphan_id,),
             )
             if row:
                 await self._db.execute(
-                    "UPDATE cost_basis SET market_id = ? WHERE market_id = ?",
+                    "UPDATE cost_basis SET market_id = ? WHERE market_id = ? AND is_paper = 0",
                     (pos.market_id, orphan_id),
                 )
                 await self._db.execute(
-                    "UPDATE portfolio SET market_id = ? WHERE market_id = ?",
+                    "UPDATE portfolio SET market_id = ? WHERE market_id = ? AND is_paper = 0",
                     (pos.market_id, orphan_id),
                 )
                 await self._db.execute(
-                    "UPDATE fills SET market_id = ? WHERE market_id = ?",
+                    "UPDATE fills SET market_id = ? WHERE market_id = ? AND is_paper = 0",
                     (pos.market_id, orphan_id),
                 )
                 repaired += 1
-                log.info("reconciler.id_repaired",
-                         orphan_id=orphan_id, real_id=pos.market_id)
+                log.info(
+                    "reconciler.id_repaired", orphan_id=orphan_id, real_id=pos.market_id
+                )
 
         if repaired:
             await self._db.commit()
         return repaired
 
     def to_live_positions(
-        self, reconciled: list[ReconciledPosition],
+        self,
+        reconciled: list[ReconciledPosition],
     ) -> list[LivePosition]:
         """Convert reconciled positions to LivePosition objects."""
         return [

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,7 +15,9 @@ from auramaur.strategy.arbitrage_scanner import ArbitrageScanner
 # ---------------------------------------------------------------------------
 
 
-def _make_market(exchange: str, yes_price: float, question: str = "Will X happen?") -> Market:
+def _make_market(
+    exchange: str, yes_price: float, question: str = "Will X happen?"
+) -> Market:
     return Market(
         id=f"{exchange}_123",
         exchange=exchange,
@@ -92,7 +93,8 @@ class TestFeeAwareProfit:
         poly = _make_market("polymarket", 0.40, "Will A happen?")
         kalshi = _make_market("kalshi", 0.50, "Will A happen?")
         scanner = self._make_scanner(
-            [poly], [kalshi],
+            [poly],
+            [kalshi],
             fees={"polymarket": 0.0, "kalshi": 0.0},
         )
 

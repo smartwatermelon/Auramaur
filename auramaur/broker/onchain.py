@@ -27,7 +27,6 @@ Safety:
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,7 +139,7 @@ _SAFE_TX_TYPES: dict[str, list[dict[str, str]]] = {
 class RedemptionResult:
     condition_id: str
     title: str
-    status: str                # "built" | "submitted" | "confirmed" | "rejected" | "skipped"
+    status: str  # "built" | "submitted" | "confirmed" | "rejected" | "skipped"
     tx_hash: str = ""
     safe_nonce: int | None = None
     calldata_preview: str = ""
@@ -219,7 +218,9 @@ class OnChainRedeemer:
         redeems 0 tokens, which is a no-op on-chain (no cost beyond calldata).
         """
         self._init()
-        ctf = self._w3.eth.contract(address=Web3.to_checksum_address(CTF_ADDRESS), abi=CTF_ABI)
+        ctf = self._w3.eth.contract(
+            address=Web3.to_checksum_address(CTF_ADDRESS), abi=CTF_ABI
+        )
         cond_bytes = self._normalize_bytes32(condition_id)
         # parentCollectionId is bytes32(0) for top-level conditions — all
         # Polymarket markets are top-level.
@@ -283,7 +284,9 @@ class OnChainRedeemer:
             "message": message,
         }
         signable = encode_typed_data(full_message=typed)
-        signed = Account.sign_message(signable, private_key=self._settings.polygon_private_key)
+        signed = Account.sign_message(
+            signable, private_key=self._settings.polygon_private_key
+        )
         # Safe expects r || s || v as 65 bytes. eth_account returns the same.
         return bytes(signed.signature)
 
@@ -404,8 +407,16 @@ class OnChainRedeemer:
         )
 
         exec_fn = safe.functions.execTransaction(
-            to, value, inner_data, operation,
-            0, 0, 0, ZERO_ADDRESS, ZERO_ADDRESS, signature,
+            to,
+            value,
+            inner_data,
+            operation,
+            0,
+            0,
+            0,
+            ZERO_ADDRESS,
+            ZERO_ADDRESS,
+            signature,
         )
         preview = exec_fn._encode_transaction_data()
 
@@ -437,19 +448,24 @@ class OnChainRedeemer:
             )
 
         # === LIVE SUBMISSION ===
-        tx = exec_fn.build_transaction({
-            "from": self._eoa_address,
-            "nonce": self._w3.eth.get_transaction_count(self._eoa_address),
-            "gasPrice": int(self._w3.eth.gas_price * 1.25),  # slight bump
-            "chainId": POLYGON_CHAIN_ID,
-        })
+        tx = exec_fn.build_transaction(
+            {
+                "from": self._eoa_address,
+                "nonce": self._w3.eth.get_transaction_count(self._eoa_address),
+                "gasPrice": int(self._w3.eth.gas_price * 1.25),  # slight bump
+                "chainId": POLYGON_CHAIN_ID,
+            }
+        )
         # Estimate gas — small buffer. Safe exec is ~150-250k gas for CTF redeem.
         try:
             tx["gas"] = int(self._w3.eth.estimate_gas(tx) * 1.2)
         except Exception as e:
             log.error("onchain.gas_estimate_failed", error=str(e)[:200])
             await self._record_attempt(
-                position, safe_nonce, status="rejected", error=f"gas_estimate: {e}"[:200]
+                position,
+                safe_nonce,
+                status="rejected",
+                error=f"gas_estimate: {e}"[:200],
             )
             return RedemptionResult(
                 condition_id=position.condition_id,
@@ -459,7 +475,9 @@ class OnChainRedeemer:
                 error=f"gas_estimate failed: {e}"[:200],
             )
 
-        signed_tx = Account.sign_transaction(tx, private_key=self._settings.polygon_private_key)
+        signed_tx = Account.sign_transaction(
+            tx, private_key=self._settings.polygon_private_key
+        )
         tx_hash = self._w3.eth.send_raw_transaction(signed_tx.raw_transaction)
         tx_hash_hex = tx_hash.hex()
 
@@ -485,7 +503,9 @@ class OnChainRedeemer:
 
         if wait_for_receipt:
             try:
-                receipt = self._w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+                receipt = self._w3.eth.wait_for_transaction_receipt(
+                    tx_hash, timeout=300
+                )
                 if receipt.status == 1:
                     await self._mark_confirmed(position.condition_id)
                     result.status = "confirmed"
@@ -505,7 +525,9 @@ class OnChainRedeemer:
                     result.error = "tx reverted on-chain"
                     log.error("onchain.redeem_reverted", tx_hash=tx_hash_hex)
             except Exception as e:
-                log.warning("onchain.receipt_timeout", tx_hash=tx_hash_hex, error=str(e)[:200])
+                log.warning(
+                    "onchain.receipt_timeout", tx_hash=tx_hash_hex, error=str(e)[:200]
+                )
 
         return result
 
@@ -526,26 +548,43 @@ def _safe_tx_hash_for_testing(
     chain_id: int = POLYGON_CHAIN_ID,
 ) -> bytes:
     """Compute the EIP-712 message hash a Safe would sign. Exposed for tests."""
-    safe_tx_typehash = keccak(text=(
-        "SafeTx(address to,uint256 value,bytes data,uint8 operation,"
-        "uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,"
-        "address refundReceiver,uint256 nonce)"
-    ))
-    domain_typehash = keccak(text="EIP712Domain(uint256 chainId,address verifyingContract)")
+    safe_tx_typehash = keccak(
+        text=(
+            "SafeTx(address to,uint256 value,bytes data,uint8 operation,"
+            "uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,"
+            "address refundReceiver,uint256 nonce)"
+        )
+    )
+    domain_typehash = keccak(
+        text="EIP712Domain(uint256 chainId,address verifyingContract)"
+    )
 
     from eth_abi import encode as abi_encode
 
     data_hash = keccak(data)
     encoded = abi_encode(
         [
-            "bytes32", "address", "uint256", "bytes32", "uint8",
-            "uint256", "uint256", "uint256", "address", "address", "uint256",
+            "bytes32",
+            "address",
+            "uint256",
+            "bytes32",
+            "uint8",
+            "uint256",
+            "uint256",
+            "uint256",
+            "address",
+            "address",
+            "uint256",
         ],
         [
             safe_tx_typehash,
             Web3.to_checksum_address(to),
-            value, data_hash, operation,
-            safe_tx_gas, base_gas, gas_price,
+            value,
+            data_hash,
+            operation,
+            safe_tx_gas,
+            base_gas,
+            gas_price,
             Web3.to_checksum_address(gas_token),
             Web3.to_checksum_address(refund_receiver),
             nonce,
@@ -553,9 +592,11 @@ def _safe_tx_hash_for_testing(
     )
     tx_hash = keccak(encoded)
 
-    domain_separator = keccak(abi_encode(
-        ["bytes32", "uint256", "address"],
-        [domain_typehash, chain_id, Web3.to_checksum_address(safe_address)],
-    ))
+    domain_separator = keccak(
+        abi_encode(
+            ["bytes32", "uint256", "address"],
+            [domain_typehash, chain_id, Web3.to_checksum_address(safe_address)],
+        )
+    )
 
     return keccak(b"\x19\x01" + domain_separator + tx_hash)

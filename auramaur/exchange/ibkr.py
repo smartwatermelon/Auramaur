@@ -14,7 +14,6 @@ Safety: Same three-gate model as other exchanges.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -105,7 +104,9 @@ class IBKRClient:
             if len(markets) >= limit:
                 break
 
-        log.info("ibkr.markets_fetched", count=len(markets), symbols=len(self._watchlist))
+        log.info(
+            "ibkr.markets_fetched", count=len(markets), symbols=len(self._watchlist)
+        )
         return markets
 
     async def get_market(self, market_id: str) -> Market | None:
@@ -119,7 +120,10 @@ class IBKRClient:
         results: list[Market] = []
         query_lower = query.lower()
         for rm in self._reframed.values():
-            if query_lower in rm.market.question.lower() or query_lower in rm.option.symbol.lower():
+            if (
+                query_lower in rm.market.question.lower()
+                or query_lower in rm.option.symbol.lower()
+            ):
                 results.append(rm.market)
                 if len(results) >= limit:
                     break
@@ -141,7 +145,10 @@ class IBKRClient:
 
         # Get option chains
         chains = await self._ib.reqSecDefOptParamsAsync(
-            stock.symbol, "", stock.secType, stock.conId,
+            stock.symbol,
+            "",
+            stock.secType,
+            stock.conId,
         )
         if not chains:
             return []
@@ -165,8 +172,10 @@ class IBKRClient:
 
         # Select strikes near the money
         strikes = sorted(chain.strikes)
-        atm_idx = min(range(len(strikes)), key=lambda i: abs(strikes[i] - underlying_price))
-        near_strikes = strikes[max(0, atm_idx - 3):atm_idx + 4]
+        atm_idx = min(
+            range(len(strikes)), key=lambda i: abs(strikes[i] - underlying_price)
+        )
+        near_strikes = strikes[max(0, atm_idx - 3) : atm_idx + 4]
 
         # Build option contracts and request market data
         option_contracts = []
@@ -198,26 +207,30 @@ class IBKRClient:
             ask = tick.ask if tick.ask > 0 else 0.0
             mid = (bid + ask) / 2 if bid > 0 and ask > 0 else tick.last or 0.0
 
-            options.append(OptionContract(
-                symbol=contract.symbol,
-                strike=contract.strike,
-                expiry=datetime.strptime(contract.lastTradeDateOrContractMonth, "%Y%m%d").replace(
-                    tzinfo=timezone.utc
-                ),
-                right=contract.right,
-                delta=greeks.delta,
-                mid_price=mid,
-                bid=bid,
-                ask=ask,
-                implied_vol=greeks.impliedVol or 0.0,
-                volume=tick.volume or 0,
-                open_interest=0,  # Requires separate request
-                underlying_price=underlying_price,
-                con_id=contract.conId,
-            ))
+            options.append(
+                OptionContract(
+                    symbol=contract.symbol,
+                    strike=contract.strike,
+                    expiry=datetime.strptime(
+                        contract.lastTradeDateOrContractMonth, "%Y%m%d"
+                    ).replace(tzinfo=timezone.utc),
+                    right=contract.right,
+                    delta=greeks.delta,
+                    mid_price=mid,
+                    bid=bid,
+                    ask=ask,
+                    implied_vol=greeks.impliedVol or 0.0,
+                    volume=tick.volume or 0,
+                    open_interest=0,  # Requires separate request
+                    underlying_price=underlying_price,
+                    con_id=contract.conId,
+                )
+            )
 
         # Select the most interesting options
-        selected = select_interesting_strikes(options, underlying_price, max_contracts=10)
+        selected = select_interesting_strikes(
+            options, underlying_price, max_contracts=10
+        )
 
         # Reframe as binary questions
         reframed: list[ReframedMarket] = []
@@ -238,7 +251,11 @@ class IBKRClient:
     # ------------------------------------------------------------------
 
     def prepare_order(
-        self, signal: Signal, market: Market, position_size: float, is_live: bool,
+        self,
+        signal: Signal,
+        market: Market,
+        position_size: float,
+        is_live: bool,
     ) -> Order | None:
         """Build an IB option order from a binary signal.
 
@@ -277,7 +294,11 @@ class IBKRClient:
         num_contracts = int(position_size / contract_cost) if contract_cost > 0 else 0
 
         if num_contracts < 1:
-            log.info("ibkr.prepare_order.too_small", position_size=position_size, cost=contract_cost)
+            log.info(
+                "ibkr.prepare_order.too_small",
+                position_size=position_size,
+                cost=contract_cost,
+            )
             return None
 
         # Encode action and contract info in token_id for order routing
@@ -337,7 +358,6 @@ class IBKRClient:
             # Parse contract info from token_id
             parts = order.token_id.split(":")
             con_id = int(parts[0])
-            action_str = parts[1]
             right = parts[2]
             strike = float(parts[3])
             expiry = parts[4]
@@ -394,8 +414,16 @@ class IBKRClient:
             contract.conId = opt.con_id
             book = await self._ib.reqMktDepthAsync(contract, numRows=5)
 
-            bids = [OrderBookLevel(price=d.price, size=float(d.size)) for d in book if d.side == 1]
-            asks = [OrderBookLevel(price=d.price, size=float(d.size)) for d in book if d.side == 0]
+            bids = [
+                OrderBookLevel(price=d.price, size=float(d.size))
+                for d in book
+                if d.side == 1
+            ]
+            asks = [
+                OrderBookLevel(price=d.price, size=float(d.size))
+                for d in book
+                if d.side == 0
+            ]
             return OrderBook(bids=bids, asks=asks)
         except Exception as e:
             log.error("ibkr.orderbook_error", market_id=market_id, error=str(e))

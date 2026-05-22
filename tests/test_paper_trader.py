@@ -1,7 +1,7 @@
 """Tests for paper trading simulator."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from auramaur.exchange.models import Order, OrderSide
 from auramaur.exchange.paper import PaperTrader
@@ -36,7 +36,7 @@ async def test_sell_increases_balance(paper):
     # First buy
     await paper.execute(Order(market_id="m1", side=OrderSide.BUY, size=10, price=0.5))
     # Then sell
-    result = await paper.execute(Order(market_id="m1", side=OrderSide.SELL, size=10, price=0.6))
+    await paper.execute(Order(market_id="m1", side=OrderSide.SELL, size=10, price=0.6))
     assert paper.balance == pytest.approx(1001.0)  # 1000 - 5 + 6
 
 

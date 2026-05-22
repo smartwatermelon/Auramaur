@@ -151,7 +151,7 @@ async def check_max_positions(open_count: int, max_positions: int = 15) -> Check
 
 async def check_min_edge(edge: float, min_edge_pct: float = 5.0) -> CheckResult:
     """Fail if the estimated edge is below the minimum threshold."""
-    too_small = abs(edge) < min_edge_pct
+    too_small = edge < min_edge_pct
     return CheckResult(
         name="min_edge",
         passed=not too_small,
@@ -316,9 +316,6 @@ async def check_time_to_resolution(
     """Fail if the market resolves too soon OR too far in the future.
 
     max_hours=0 disables the ceiling (default — no upper bound).
-    Pass float('inf') for hours_remaining when end_date is unknown; that
-    fails the ceiling check so markets with no resolution date are rejected
-    when a ceiling is configured.
     """
     if hours_remaining < min_hours:
         return CheckResult(

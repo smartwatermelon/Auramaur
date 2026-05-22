@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import structlog
 
@@ -27,14 +27,67 @@ INTERNAL_ARB_THRESHOLD = 0.97
 MATCH_THRESHOLD = 0.60
 
 # Common stop words to ignore in fuzzy matching
-_STOP_WORDS = frozenset({
-    "the", "a", "an", "is", "are", "was", "were", "will", "be", "been",
-    "to", "of", "in", "for", "on", "at", "by", "or", "and", "it", "its",
-    "this", "that", "with", "from", "as", "do", "does", "did", "not", "no",
-    "yes", "has", "have", "had", "can", "could", "would", "should", "may",
-    "if", "but", "so", "than", "then", "what", "which", "who", "whom",
-    "how", "when", "where", "why", "before", "after", "during", "between",
-})
+_STOP_WORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "will",
+        "be",
+        "been",
+        "to",
+        "of",
+        "in",
+        "for",
+        "on",
+        "at",
+        "by",
+        "or",
+        "and",
+        "it",
+        "its",
+        "this",
+        "that",
+        "with",
+        "from",
+        "as",
+        "do",
+        "does",
+        "did",
+        "not",
+        "no",
+        "yes",
+        "has",
+        "have",
+        "had",
+        "can",
+        "could",
+        "would",
+        "should",
+        "may",
+        "if",
+        "but",
+        "so",
+        "than",
+        "then",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "how",
+        "when",
+        "where",
+        "why",
+        "before",
+        "after",
+        "during",
+        "between",
+    }
+)
 
 
 @dataclass
@@ -151,17 +204,17 @@ class ArbitrageScanner:
                 matched = self._match_markets(markets_a, markets_b)
 
                 for market_a, market_b in matched:
-                    spread = abs(market_a.outcome_yes_price - market_b.outcome_yes_price)
+                    spread = abs(
+                        market_a.outcome_yes_price - market_b.outcome_yes_price
+                    )
 
                     if spread < CROSS_EXCHANGE_MIN_SPREAD:
                         continue
 
                     # Identify cheap/expensive sides for fee calc
                     if market_a.outcome_yes_price <= market_b.outcome_yes_price:
-                        cheap_yes, expensive_yes = market_a, market_b
                         cheap_exchange, expensive_exchange = name_a, name_b
                     else:
-                        cheap_yes, expensive_yes = market_b, market_a
                         cheap_exchange, expensive_exchange = name_b, name_a
 
                     # Fee-aware profit: buy YES cheap, buy NO on expensive side
@@ -209,7 +262,9 @@ class ArbitrageScanner:
             log.info(
                 "arb_scanner.scan_complete",
                 total_opportunities=len(opportunities),
-                cross_exchange=sum(1 for o in opportunities if o.arb_type == "cross_exchange"),
+                cross_exchange=sum(
+                    1 for o in opportunities if o.arb_type == "cross_exchange"
+                ),
                 internal=sum(1 for o in opportunities if o.arb_type == "internal"),
                 best_profit_pct=round(opportunities[0].expected_profit_pct, 2),
             )
@@ -349,7 +404,9 @@ class ArbitrageScanner:
             Exchanges that fail to fetch are omitted (not fatal).
         """
 
-        async def _fetch_one(name: str, discovery: MarketDiscovery) -> tuple[str, list[Market]]:
+        async def _fetch_one(
+            name: str, discovery: MarketDiscovery
+        ) -> tuple[str, list[Market]]:
             try:
                 markets = await discovery.get_markets(active=True, limit=100)
                 log.debug("arb_scanner.fetched", exchange=name, count=len(markets))

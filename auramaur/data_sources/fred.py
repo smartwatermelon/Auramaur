@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import structlog
 from fredapi import Fred  # type: ignore[import-untyped]
 
-from auramaur.data_sources.base import DataSource, NewsItem
+from auramaur.data_sources.base import NewsItem
 
 logger = structlog.get_logger(__name__)
 
@@ -72,7 +72,11 @@ class FREDSource:
                 continue
 
             for date, value in observations.items():
-                ts = date.to_pydatetime() if hasattr(date, "to_pydatetime") else datetime.now(timezone.utc)
+                ts = (
+                    date.to_pydatetime()
+                    if hasattr(date, "to_pydatetime")
+                    else datetime.now(timezone.utc)
+                )
                 item_id = hashlib.sha256(
                     f"fred:{series_id}:{date}".encode()
                 ).hexdigest()[:16]

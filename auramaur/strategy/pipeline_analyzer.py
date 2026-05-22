@@ -89,18 +89,24 @@ class PipelineAnalyzer:
             if not self._try_claim_market(market.id):
                 continue
             try:
-                queries = extract_search_queries(market.question, market.description, market.category or "")
+                queries = extract_search_queries(
+                    market.question, market.description, market.category or ""
+                )
                 all_evidence: list = []
                 seen_ids: set[str] = set()
                 for query in queries:
                     items = await self.aggregator.gather(
-                        query, limit_per_source=3, category=market.category or None,
+                        query,
+                        limit_per_source=3,
+                        category=market.category or None,
                     )
                     for item in items:
                         if item.id not in seen_ids:
                             seen_ids.add(item.id)
                             all_evidence.append(item)
-                evidence_map[market.id] = all_evidence[:self.settings.nlp.evidence_per_source * 3]
+                evidence_map[market.id] = all_evidence[
+                    : self.settings.nlp.evidence_per_source * 3
+                ]
             except Exception as e:
                 log.error("pipeline.evidence_error", market_id=market.id, error=str(e))
                 evidence_map[market.id] = []
@@ -109,7 +115,9 @@ class PipelineAnalyzer:
         if not batch_markets:
             return []
 
-        analysis = await self.strategic.analyze_batch_with_adversarial(batch_markets, evidence_map)
+        analysis = await self.strategic.analyze_batch_with_adversarial(
+            batch_markets, evidence_map
+        )
 
         if not analysis.markets:
             log.warning("pipeline.no_results", batch_size=len(batch_markets))
@@ -117,7 +125,9 @@ class PipelineAnalyzer:
 
         candidates: list[TradeCandidate] = []
         for batch_result in analysis.markets:
-            market = next((m for m in batch_markets if m.id == batch_result.market_id), None)
+            market = next(
+                (m for m in batch_markets if m.id == batch_result.market_id), None
+            )
             if market is None:
                 continue
 
@@ -143,8 +153,12 @@ class PipelineAnalyzer:
             )
 
             show_analysis(
-                signal.claude_prob, signal.market_prob, signal.edge,
-                batch_result.confidence, None, None,
+                signal.claude_prob,
+                signal.market_prob,
+                signal.edge,
+                batch_result.confidence,
+                None,
+                None,
             )
 
             candidates.append(TradeCandidate(market=market, signal=signal))
@@ -161,7 +175,6 @@ class PipelineAnalyzer:
         price_history: dict[str, list[float]] | None = None,
     ) -> list[TradeCandidate]:
         """Analyze markets one at a time (legacy path)."""
-        from auramaur.nlp.query_decomposer import extract_search_queries
 
         candidates: list[TradeCandidate] = []
 
@@ -185,19 +198,27 @@ class PipelineAnalyzer:
         show_analyzing(market.question, market.id)
 
         # 1. Gather evidence
-        queries = extract_search_queries(market.question, market.description, market.category or "")
+        queries = extract_search_queries(
+            market.question, market.description, market.category or ""
+        )
         all_evidence: list = []
         seen_ids: set[str] = set()
-        per_query_limit = max(1, self.settings.nlp.evidence_per_source // len(queries)) if queries else self.settings.nlp.evidence_per_source
+        per_query_limit = (
+            max(1, self.settings.nlp.evidence_per_source // len(queries))
+            if queries
+            else self.settings.nlp.evidence_per_source
+        )
         for query in queries:
             items = await self.aggregator.gather(
-                query, limit_per_source=per_query_limit, category=market.category or None,
+                query,
+                limit_per_source=per_query_limit,
+                category=market.category or None,
             )
             for item in items:
                 if item.id not in seen_ids:
                     seen_ids.add(item.id)
                     all_evidence.append(item)
-        evidence = all_evidence[:self.settings.nlp.evidence_per_source * 3]
+        evidence = all_evidence[: self.settings.nlp.evidence_per_source * 3]
         source_counts: dict[str, int] = {}
         for e in evidence:
             source_counts[e.source] = source_counts.get(e.source, 0) + 1
@@ -224,18 +245,28 @@ class PipelineAnalyzer:
                 pass
             nudge = self.flow_tracker.get_probability_nudge(market.id)
             if nudge != 0 and analysis.calibrated_probability is not None:
-                analysis.calibrated_probability = max(0.01, min(0.99, analysis.calibrated_probability + nudge))
+                analysis.calibrated_probability = max(
+                    0.01, min(0.99, analysis.calibrated_probability + nudge)
+                )
             elif nudge != 0:
-                analysis.probability = max(0.01, min(0.99, analysis.probability + nudge))
+                analysis.probability = max(
+                    0.01, min(0.99, analysis.probability + nudge)
+                )
 
         # 3. Signal detection
-        signal = detect_edge(market, analysis)
+        signal = detect_edge(
+            market, analysis, exchange_fees=self.settings.arbitrage.exchange_fees
+        )
         if signal is None:
             return None
 
         show_analysis(
-            signal.claude_prob, signal.market_prob, signal.edge,
-            analysis.confidence, analysis.second_opinion_prob, analysis.divergence,
+            signal.claude_prob,
+            signal.market_prob,
+            signal.edge,
+            analysis.confidence,
+            analysis.second_opinion_prob,
+            analysis.divergence,
         )
 
         return TradeCandidate(market=market, signal=signal)

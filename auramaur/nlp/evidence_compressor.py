@@ -15,8 +15,6 @@ into the principal components that carry the most predictive signal.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import re
 
 import structlog
@@ -71,13 +69,15 @@ def compress_evidence(
     # 5. RAW EXCERPTS — top 3 most relevant snippets (for Claude to reason over)
     excerpts = _extract_top_excerpts(question, unique, max_excerpts=3)
     if excerpts:
-        parts.append("KEY EXCERPTS:\n" + "\n".join(f"- [{e[0]}] {e[1]}" for e in excerpts))
+        parts.append(
+            "KEY EXCERPTS:\n" + "\n".join(f"- [{e[0]}] {e[1]}" for e in excerpts)
+        )
 
     compressed = "\n".join(parts)
 
     # Ensure we stay under budget
     if len(compressed) > max_chars:
-        compressed = compressed[:max_chars - 20] + "\n...(truncated)"
+        compressed = compressed[: max_chars - 20] + "\n...(truncated)"
 
     log.debug(
         "evidence.compressed",
@@ -115,11 +115,11 @@ def _extract_facts(evidence: list[NewsItem]) -> list[str]:
 
     # Patterns that indicate factual content
     fact_patterns = [
-        r'\$[\d,.]+[BMK]?\b',           # Dollar amounts
-        r'\d+\.?\d*%',                    # Percentages
-        r'\b\d{1,2}/\d{1,2}/\d{2,4}\b', # Dates
-        r'\b(?:signed|announced|confirmed|approved|rejected|passed|failed)\b',
-        r'\b(?:according to|reported|stated|said)\b',
+        r"\$[\d,.]+[BMK]?\b",  # Dollar amounts
+        r"\d+\.?\d*%",  # Percentages
+        r"\b\d{1,2}/\d{1,2}/\d{2,4}\b",  # Dates
+        r"\b(?:signed|announced|confirmed|approved|rejected|passed|failed)\b",
+        r"\b(?:according to|reported|stated|said)\b",
     ]
 
     for item in evidence[:10]:
@@ -127,9 +127,12 @@ def _extract_facts(evidence: list[NewsItem]) -> list[str]:
         for pattern in fact_patterns:
             if re.search(pattern, content, re.IGNORECASE):
                 # Extract the sentence containing the fact
-                sentences = re.split(r'[.!?]', content)
+                sentences = re.split(r"[.!?]", content)
                 for sent in sentences:
-                    if re.search(pattern, sent, re.IGNORECASE) and len(sent.strip()) > 15:
+                    if (
+                        re.search(pattern, sent, re.IGNORECASE)
+                        and len(sent.strip()) > 15
+                    ):
                         fact = sent.strip()[:150]
                         if fact not in facts:
                             facts.append(fact)
@@ -140,7 +143,8 @@ def _extract_facts(evidence: list[NewsItem]) -> list[str]:
 
 
 def _extract_directional(
-    question: str, evidence: list[NewsItem],
+    question: str,
+    evidence: list[NewsItem],
 ) -> tuple[list[str], list[str]]:
     """Classify evidence as supporting YES or NO."""
     yes_signals: list[str] = []
@@ -148,14 +152,37 @@ def _extract_directional(
 
     # Simple keyword-based directional classification
     positive_words = {
-        "will", "likely", "expected", "confirmed", "approved", "agreed",
-        "advancing", "progress", "success", "growth", "increase", "rising",
-        "support", "momentum", "boost",
+        "will",
+        "likely",
+        "expected",
+        "confirmed",
+        "approved",
+        "agreed",
+        "advancing",
+        "progress",
+        "success",
+        "growth",
+        "increase",
+        "rising",
+        "support",
+        "momentum",
+        "boost",
     }
     negative_words = {
-        "unlikely", "rejected", "failed", "denied", "blocked", "delayed",
-        "declined", "falling", "collapse", "opposition", "against",
-        "stalled", "uncertain", "doubt",
+        "unlikely",
+        "rejected",
+        "failed",
+        "denied",
+        "blocked",
+        "delayed",
+        "declined",
+        "falling",
+        "collapse",
+        "opposition",
+        "against",
+        "stalled",
+        "uncertain",
+        "doubt",
     }
 
     q_words = set(question.lower().split())
@@ -201,7 +228,6 @@ def _extract_temporal(evidence: list[NewsItem]) -> str:
         return ""
 
     newest = min(ages)
-    oldest = max(ages)
 
     if newest < 1:
         freshness = "Breaking — evidence from last hour"
@@ -224,7 +250,9 @@ def _extract_consensus(evidence: list[NewsItem]) -> str:
     if len(sources) <= 1:
         return f"Single source ({next(iter(sources), 'unknown')})"
     elif len(sources) >= 4:
-        return f"Broad coverage ({len(sources)} sources: {', '.join(sorted(sources)[:5])})"
+        return (
+            f"Broad coverage ({len(sources)} sources: {', '.join(sorted(sources)[:5])})"
+        )
     else:
         return f"{len(sources)} sources: {', '.join(sorted(sources))}"
 
@@ -235,7 +263,19 @@ def _extract_top_excerpts(
     max_excerpts: int = 3,
 ) -> list[tuple[str, str]]:
     """Extract the most relevant text excerpts."""
-    q_words = set(question.lower().split()) - {"will", "the", "a", "an", "of", "in", "on", "by", "to", "be", "is"}
+    q_words = set(question.lower().split()) - {
+        "will",
+        "the",
+        "a",
+        "an",
+        "of",
+        "in",
+        "on",
+        "by",
+        "to",
+        "be",
+        "is",
+    }
 
     scored: list[tuple[float, str, str]] = []
     for item in evidence:
@@ -247,7 +287,9 @@ def _extract_top_excerpts(
         content_words = set(content.lower().split())
         overlap = len(q_words & content_words)
         # Bonus for source reliability
-        source_bonus = {"reuters": 2, "ap": 2, "bbc": 1.5, "web": 1, "newsapi": 1}.get(item.source.lower(), 0.5)
+        source_bonus = {"reuters": 2, "ap": 2, "bbc": 1.5, "web": 1, "newsapi": 1}.get(
+            item.source.lower(), 0.5
+        )
 
         score = overlap * source_bonus
         snippet = content[:200].strip()

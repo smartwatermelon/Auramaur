@@ -404,20 +404,17 @@ def status():
         # Show real Polymarket balance when live
         if settings.is_live and settings.polygon_private_key:
             try:
-                from py_clob_client.client import ClobClient
-                from py_clob_client.clob_types import ApiCreds
+                from py_clob_client_v2 import ClobClient, ApiCreds
 
                 client = ClobClient(
                     "https://clob.polymarket.com",
-                    key=settings.polygon_private_key,
                     chain_id=137,
-                )
-                client.set_api_creds(
-                    ApiCreds(
+                    key=settings.polygon_private_key,
+                    creds=ApiCreds(
                         api_key=settings.polymarket_api_key,
                         api_secret=settings.polymarket_api_secret,
                         api_passphrase=settings.polymarket_passphrase,
-                    )
+                    ),
                 )
                 orders = client.get_orders()
                 console.print(

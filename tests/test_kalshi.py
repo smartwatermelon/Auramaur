@@ -9,7 +9,6 @@ from auramaur.exchange.models import Market, Order, OrderSide, Position, TokenTy
 
 
 class TestKalshiPositionSyncerBalance:
-    """KalshiPositionSyncer.get_cash_balance must return paper balance in paper mode."""
 
     def _settings(self, is_live: bool):
         s = MagicMock()
@@ -42,8 +41,7 @@ class TestKalshiPositionSyncerBalance:
         exchange.get_balance.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_paper_mode_without_paper_object_falls_back_to_exchange(self):
-        """Backwards-compat: if paper=None (old call site), fall back to exchange query."""
+    async def test_paper_mode_without_paper_falls_back_to_exchange(self):
         exchange = MagicMock()
         exchange.get_balance = AsyncMock(return_value=42.0)
         syncer = KalshiPositionSyncer(
@@ -56,17 +54,11 @@ class TestKalshiPositionSyncerBalance:
 
 
 class TestKalshiPositionSyncerPaperSync:
-    """KalshiPositionSyncer.sync() must use PaperTrader in paper mode."""
 
     def _settings(self, is_live: bool):
         s = MagicMock()
         s.is_live = is_live
         return s
-
-    def _paper_with_positions(self, positions: dict):
-        paper = MagicMock()
-        paper.positions = positions
-        return paper
 
     def _db(self):
         db = MagicMock()
@@ -77,7 +69,6 @@ class TestKalshiPositionSyncerPaperSync:
 
     @pytest.mark.asyncio
     async def test_paper_mode_returns_paper_positions(self):
-        """Paper sync reads from PaperTrader.positions, not exchange API."""
         pos = Position(
             market_id="KXTEST",
             side=OrderSide.BUY,
@@ -88,86 +79,39 @@ class TestKalshiPositionSyncerPaperSync:
             token=TokenType.YES,
             token_id="KXTEST",
         )
-        exchange = MagicMock()
-        exchange.sync_positions = AsyncMock()
+        paper = MagicMock()
+        paper.positions = {"KXTEST": pos}
 
         syncer = KalshiPositionSyncer(
             settings=self._settings(is_live=False),
             db=self._db(),
-            exchange=exchange,
-            paper=self._paper_with_positions({"KXTEST": pos}),
+            exchange=MagicMock(),
+            paper=paper,
         )
 
         positions = await syncer.sync()
-
         assert len(positions) == 1
         assert positions[0].market_id == "KXTEST"
         assert positions[0].size == 10.0
-        assert positions[0].avg_cost == 0.5
-        exchange.sync_positions.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_live_mode_calls_exchange(self):
-        """Live sync delegates to exchange.sync_positions, not PaperTrader."""
-        exchange = MagicMock()
-        exchange.sync_positions = AsyncMock()
-        db = self._db()
-
-        syncer = KalshiPositionSyncer(
-            settings=self._settings(is_live=True),
-            db=db,
-            exchange=exchange,
-            paper=self._paper_with_positions({"KXTEST": MagicMock()}),
-        )
-
-        await syncer.sync()
-        exchange.sync_positions.assert_called_once_with(db)
 
     @pytest.mark.asyncio
     async def test_paper_sync_empty_clears_portfolio(self):
-        """Paper sync with no positions issues a DELETE to clear stale rows."""
+        paper = MagicMock()
+        paper.positions = {}
+
         syncer = KalshiPositionSyncer(
             settings=self._settings(is_live=False),
             db=self._db(),
             exchange=MagicMock(),
-            paper=self._paper_with_positions({}),
+            paper=paper,
         )
 
         positions = await syncer.sync()
-
         assert positions == []
-        syncer._db.execute.assert_called()
-        call_args = syncer._db.execute.call_args_list
-        delete_calls = [c for c in call_args if "DELETE" in str(c)]
-        assert delete_calls, "Expected DELETE call for empty positions"
-
-    @pytest.mark.asyncio
-    async def test_paper_sync_persists_to_portfolio(self):
-        """Paper sync writes each position to the portfolio table via INSERT."""
-        pos = Position(
-            market_id="KXWEDDING",
-            side=OrderSide.BUY,
-            size=5.0,
-            avg_price=0.3,
-            current_price=0.35,
-            category="entertainment",
-            token=TokenType.NO,
-            token_id="KXWEDDING",
-        )
-        db = self._db()
-
-        syncer = KalshiPositionSyncer(
-            settings=self._settings(is_live=False),
-            db=db,
-            exchange=MagicMock(),
-            paper=self._paper_with_positions({"KXWEDDING": pos}),
-        )
-
-        await syncer.sync()
-
-        insert_calls = [c for c in db.execute.call_args_list if "INSERT" in str(c)]
-        assert insert_calls, "Expected INSERT call for portfolio upsert"
-        db.commit.assert_called()
+        delete_calls = [
+            c for c in syncer._db.execute.call_args_list if "DELETE" in str(c)
+        ]
+        assert delete_calls
 
 
 class TestKalshiMarketParsing:

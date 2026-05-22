@@ -125,32 +125,35 @@ class ResolutionTracker:
             True  — resolved YES
             False — resolved NO
             None  — not yet resolved / ambiguous
+
+        Resolution is only declared when the exchange itself has signalled
+        closure.  The earlier implementation checked price convergence
+        before ``market.active`` and could mark a still-trading market at
+        95%/5% as resolved — which then settled the portfolio position
+        prematurely and fed a fake outcome into calibration.
         """
-        yes_price = market.outcome_yes_price
-
-        # Price convergence is the strongest signal.  Resolved markets go
-        # to ~0 or ~1.  Check this FIRST because some APIs (Gamma/Polymarket)
-        # keep the ``active`` flag True even after a market has fully resolved
-        # and prices have converged.
-        if yes_price >= 0.95:
-            return True  # Resolved YES
-        if yes_price <= 0.05:
-            return False  # Resolved NO
-
-        # Market still trading at a non-extreme price and flagged active
-        # by the exchange — genuinely unresolved.
-        if market.active:
-            return None
-
-        # Kalshi-specific: markets have an explicit status field.  If the
-        # market is settled/finalized but the price didn't clearly converge
-        # (rare edge case for multi-outcome events), use price as tiebreak.
+        # Kalshi exposes an explicit settlement status — trust it first.
         if exchange == "kalshi":
             status = getattr(market, "status", None)
             if status in ("settled", "finalized"):
-                return yes_price > 0.5
+                return market.outcome_yes_price > 0.5
 
-        # Market inactive but price ambiguous — can't determine cleanly.
+        # For everything else, the exchange must have flagged the market
+        # inactive (closed/resolved on Polymarket's side).  A still-active
+        # market is by definition not resolved, regardless of price.
+        if market.active:
+            return None
+
+        # Inactive + tightly converged price → resolution.  The threshold
+        # is intentionally tight (0.99/0.01) to avoid declaring a winner
+        # on markets that closed early or paused with non-trivial spread.
+        yes_price = market.outcome_yes_price
+        if yes_price >= 0.99:
+            return True
+        if yes_price <= 0.01:
+            return False
+
+        # Inactive but price ambiguous — wait for clearer signal.
         return None
 
     # ------------------------------------------------------------------
@@ -171,10 +174,15 @@ class ResolutionTracker:
             # No position — we only had a calibration prediction, not a trade.
             return
 
-        entry_price = pos_row["avg_price"]
-        size = pos_row["size"]
-        side = pos_row["side"]
-        token = pos_row.get("token", "YES")
+        # aiosqlite.Row supports __getitem__ but not .get(); normalise to a
+        # plain dict so we can safely use defaults for columns added in
+        # later migrations (token, is_paper).
+        pos = dict(pos_row)
+        entry_price = pos["avg_price"]
+        size = pos["size"]
+        side = pos["side"]
+        token = pos.get("token") or "YES"
+        is_paper_flag = int(pos.get("is_paper", 1))
 
         # Settlement price: YES resolves to $1, NO resolves to $0
         if token == "NO":
@@ -205,21 +213,24 @@ class ResolutionTracker:
         except Exception as e:
             log.debug("resolution.daily_stats_error", error=str(e))
 
-        # Update cost_basis realized PnL
+        # Update cost_basis realized PnL — scoped to the same paper/live mode
+        # as the portfolio row so a paper resolution can't zero a live row's
+        # cost basis (and vice versa).
         try:
             await self._db.execute(
                 """UPDATE cost_basis
                    SET realized_pnl = realized_pnl + ?, size = 0, updated_at = datetime('now')
-                   WHERE market_id = ?""",
-                (pnl, market_id),
+                   WHERE market_id = ? AND is_paper = ?""",
+                (pnl, market_id, is_paper_flag),
             )
         except Exception as e:
             log.debug("resolution.cost_basis_error", error=str(e))
 
-        # Remove from portfolio
+        # Remove from portfolio — scoped by is_paper so a paper resolution
+        # doesn't delete a live position for the same market (and vice versa).
         await self._db.execute(
-            "DELETE FROM portfolio WHERE market_id = ?",
-            (market_id,),
+            "DELETE FROM portfolio WHERE market_id = ? AND is_paper = ?",
+            (market_id, is_paper_flag),
         )
 
         # Remove peak tracking

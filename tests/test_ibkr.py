@@ -5,12 +5,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, AsyncMock
 
 from auramaur.exchange.ibkr import IBKRClient
-from auramaur.exchange.models import Confidence, Market, Order, OrderSide, Signal, TokenType
+from auramaur.exchange.models import Confidence, Market, Order, OrderSide, Signal
 from auramaur.nlp.reframer import (
     OptionContract,
-    ReframedMarket,
-    TradeMapping,
-    ReframeType,
     reframe_option_as_binary,
 )
 
@@ -70,7 +67,9 @@ class TestIBKRPrepareOrder:
             recommended_side=OrderSide.BUY,
         )
 
-        order = client.prepare_order(signal, client._reframed[market_id].market, 1000.0, False)
+        order = client.prepare_order(
+            signal, client._reframed[market_id].market, 1000.0, False
+        )
         assert order is not None
         assert order.side == OrderSide.BUY
         assert order.exchange == "ibkr"
@@ -91,7 +90,9 @@ class TestIBKRPrepareOrder:
             recommended_side=OrderSide.SELL,
         )
 
-        order = client.prepare_order(signal, client._reframed[market_id].market, 1000.0, False)
+        order = client.prepare_order(
+            signal, client._reframed[market_id].market, 1000.0, False
+        )
         assert order is not None
         assert order.side == OrderSide.BUY  # Buying a put
         assert "buy_put" in order.token_id
@@ -104,7 +105,9 @@ class TestIBKRPrepareOrder:
         signal.market_id = market_id
 
         # $5.50 * 100 multiplier = $550 per contract; $100 can't buy one
-        order = client.prepare_order(signal, client._reframed[market_id].market, 100.0, False)
+        order = client.prepare_order(
+            signal, client._reframed[market_id].market, 100.0, False
+        )
         assert order is None
 
     def test_no_reframe_returns_none(self):
@@ -122,12 +125,14 @@ class TestIBKRPaperGate:
     async def test_paper_routes_to_paper_trader(self):
         """Dry-run orders go through PaperTrader."""
         paper = MagicMock()
-        paper.execute = AsyncMock(return_value=MagicMock(
-            order_id="PAPER-123",
-            market_id="IB:AAPL:200:20260418:C",
-            status="paper",
-            is_paper=True,
-        ))
+        paper.execute = AsyncMock(
+            return_value=MagicMock(
+                order_id="PAPER-123",
+                market_id="IB:AAPL:200:20260418:C",
+                status="paper",
+                is_paper=True,
+            )
+        )
 
         client = IBKRClient.__new__(IBKRClient)
         client._paper = paper
@@ -150,6 +155,7 @@ class TestIBKRPaperGate:
 class TestIBKRConfig:
     def test_ibkr_config_defaults(self):
         from config.settings import Settings
+
         s = Settings()
         assert s.ibkr.enabled is False
         assert s.ibkr.environment == "paper"

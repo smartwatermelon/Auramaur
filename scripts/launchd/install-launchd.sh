@@ -16,6 +16,8 @@ set -euo pipefail
 
 REPO="${HOME}/Developer/Auramaur"
 PLIST_SRC="${REPO}/scripts/launchagent"
+WRAPPER_SRC="${REPO}/scripts/launchd"
+WRAPPER_DST="${HOME}/Library/Application Support/auramaur/scripts"
 LA_DIR="${HOME}/Library/LaunchAgents"
 LOG_DIR="${HOME}/Library/Logs/auramaur"
 EXPECTED_HOME="/Users/andrewrich"
@@ -79,6 +81,21 @@ fi
 # Create log directory.
 mkdir -p "${LOG_DIR}"
 log "Log directory: ${LOG_DIR}"
+
+# Copy wrapper scripts to internal disk (TCC blocks launchd from
+# reading scripts on external volumes — exit code 126).
+mkdir -p "${WRAPPER_DST}"
+for script in wrapper-bot.sh wrapper-observability.sh; do
+  src="${WRAPPER_SRC}/${script}"
+  if [[ -f "${src}" ]]; then
+    cp "${src}" "${WRAPPER_DST}/${script}"
+    chmod +x "${WRAPPER_DST}/${script}"
+    log "Copied ${script} → ${WRAPPER_DST}/"
+  else
+    log "ERROR: wrapper script not found: ${src}"
+    exit 1
+  fi
+done
 
 # Symlink plists into ~/Library/LaunchAgents/.
 mkdir -p "${LA_DIR}"

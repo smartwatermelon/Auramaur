@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import structlog
@@ -65,7 +65,8 @@ class KalshiClient:
         self._client = _KalshiSDK(configuration=configuration)
         self._client.set_kalshi_auth(
             key_id=cfg.api_key or self._settings.kalshi_api_key,
-            private_key_path=cfg.private_key_path or self._settings.kalshi_private_key_path,
+            private_key_path=cfg.private_key_path
+            or self._settings.kalshi_private_key_path,
         )
 
         self._events_api = EventsApi(self._client)
@@ -86,8 +87,10 @@ class KalshiClient:
     async def _get_events_raw(self, **kwargs) -> list[dict]:
         """Fetch events and return raw dicts (bypasses SDK model validation)."""
         import json
+
         response = await self._call(
-            self._events_api.get_events_without_preload_content, **kwargs,
+            self._events_api.get_events_without_preload_content,
+            **kwargs,
         )
         data = json.loads(response.data)
         return data.get("events", [])
@@ -95,8 +98,10 @@ class KalshiClient:
     async def _get_market_raw(self, ticker: str) -> dict | None:
         """Fetch a single market as raw dict."""
         import json
+
         response = await self._call(
-            self._markets_api.get_market_without_preload_content, ticker,
+            self._markets_api.get_market_without_preload_content,
+            ticker,
         )
         data = json.loads(response.data)
         return data.get("market")
@@ -177,7 +182,11 @@ class KalshiClient:
     # ------------------------------------------------------------------
 
     def prepare_order(
-        self, signal: Signal, market: Market, position_size: float, is_live: bool,
+        self,
+        signal: Signal,
+        market: Market,
+        position_size: float,
+        is_live: bool,
     ) -> Order | None:
         """Build a Kalshi order from a signal.
 
@@ -202,9 +211,13 @@ class KalshiClient:
                 side = OrderSide.SELL
                 token = signal.exit_token
                 if token == TokenType.NO:
-                    exec_price = market.outcome_no_price - market.spread / 2 - aggression
+                    exec_price = (
+                        market.outcome_no_price - market.spread / 2 - aggression
+                    )
                 else:
-                    exec_price = market.outcome_yes_price - market.spread / 2 - aggression
+                    exec_price = (
+                        market.outcome_yes_price - market.spread / 2 - aggression
+                    )
             else:
                 side = OrderSide.BUY
                 token = TokenType.NO
@@ -260,6 +273,7 @@ class KalshiClient:
         # Guard: skip if we already have a resting order on the same market + side
         try:
             import json as _json
+
             existing = await self._call(
                 self._portfolio_api.get_orders_without_preload_content,
             )
@@ -268,10 +282,12 @@ class KalshiClient:
             kalshi_action = "buy" if order.side == OrderSide.BUY else "sell"
             ticker = order.token_id
             for o in existing_data.get("orders", []):
-                if (o.get("status") == "resting"
-                        and o.get("ticker") == ticker
-                        and o.get("side") == kalshi_side
-                        and o.get("action") == kalshi_action):
+                if (
+                    o.get("status") == "resting"
+                    and o.get("ticker") == ticker
+                    and o.get("side") == kalshi_side
+                    and o.get("action") == kalshi_action
+                ):
                     log.info(
                         "order.skip_duplicate",
                         exchange="kalshi",
@@ -355,7 +371,12 @@ class KalshiClient:
                 is_paper=False,
             )
         except Exception as e:
-            log.error("order.live_error", exchange="kalshi", error=str(e), ticker=order.token_id)
+            log.error(
+                "order.live_error",
+                exchange="kalshi",
+                error=str(e),
+                ticker=order.token_id,
+            )
             return OrderResult(
                 order_id="ERROR",
                 market_id=order.market_id,
@@ -369,33 +390,47 @@ class KalshiClient:
         self._init_api()
         try:
             import json
+
             response = await self._call(
-                self._markets_api.get_market_orderbook_with_http_info, market_id,
+                self._markets_api.get_market_orderbook_with_http_info,
+                market_id,
             )
             data = json.loads(response.raw_data)
             # API returns orderbook_fp (dollar strings) or orderbook (cents)
             book = data.get("orderbook_fp", data.get("orderbook", {}))
 
             bids = []
-            for level in (book.get("yes_dollars") or book.get("yes") or book.get("var_true") or []):
+            for level in (
+                book.get("yes_dollars") or book.get("yes") or book.get("var_true") or []
+            ):
                 if isinstance(level, list):
                     # [price_str, size_str] in dollars
-                    bids.append(OrderBookLevel(price=float(level[0]), size=float(level[1])))
+                    bids.append(
+                        OrderBookLevel(price=float(level[0]), size=float(level[1]))
+                    )
                 elif isinstance(level, dict):
                     price = float(level.get("price", 0))
                     if price > 1:
                         price = price / 100
-                    bids.append(OrderBookLevel(price=price, size=float(level.get("count", 0))))
+                    bids.append(
+                        OrderBookLevel(price=price, size=float(level.get("count", 0)))
+                    )
 
             asks = []
-            for level in (book.get("no_dollars") or book.get("no") or book.get("var_false") or []):
+            for level in (
+                book.get("no_dollars") or book.get("no") or book.get("var_false") or []
+            ):
                 if isinstance(level, list):
-                    asks.append(OrderBookLevel(price=float(level[0]), size=float(level[1])))
+                    asks.append(
+                        OrderBookLevel(price=float(level[0]), size=float(level[1]))
+                    )
                 elif isinstance(level, dict):
                     price = float(level.get("price", 0))
                     if price > 1:
                         price = price / 100
-                    asks.append(OrderBookLevel(price=price, size=float(level.get("count", 0))))
+                    asks.append(
+                        OrderBookLevel(price=price, size=float(level.get("count", 0)))
+                    )
 
             return OrderBook(bids=bids, asks=asks)
         except Exception as e:
@@ -423,7 +458,8 @@ class KalshiClient:
                 market_id=getattr(order_data, "ticker", ""),
                 status=status,  # type: ignore[arg-type]
                 filled_size=float(
-                    getattr(order_data, "count", 0) - getattr(order_data, "remaining_count", 0)
+                    getattr(order_data, "count", 0)
+                    - getattr(order_data, "remaining_count", 0)
                 ),
                 filled_price=float(getattr(order_data, "yes_price", 0)) / 100,
                 is_paper=False,
@@ -498,17 +534,22 @@ class KalshiClient:
 
                 await db.execute(
                     """INSERT INTO portfolio
-                       (market_id, exchange, side, size, avg_price, current_price, token, updated_at)
-                       VALUES (?, 'kalshi', 'BUY', ?, ?, ?, ?, datetime('now'))
-                       ON CONFLICT(market_id) DO UPDATE SET
+                       (market_id, exchange, side, size, avg_price, current_price, token, is_paper, updated_at)
+                       VALUES (?, 'kalshi', 'BUY', ?, ?, ?, ?, 0, datetime('now'))
+                       ON CONFLICT(market_id, is_paper) DO UPDATE SET
                            exchange = excluded.exchange,
                            size = excluded.size,
                            avg_price = excluded.avg_price,
                            current_price = excluded.current_price,
                            token = excluded.token,
                            updated_at = excluded.updated_at""",
-                    (ticker, contracts, round(avg_price, 4),
-                     round(current_price, 4), token),
+                    (
+                        ticker,
+                        contracts,
+                        round(avg_price, 4),
+                        round(current_price, 4),
+                        token,
+                    ),
                 )
                 synced += 1
 
@@ -600,7 +641,9 @@ class KalshiClient:
                     end_date = close_time
                 elif isinstance(close_time, str):
                     try:
-                        end_date = datetime.fromisoformat(close_time.replace("Z", "+00:00"))
+                        end_date = datetime.fromisoformat(
+                            close_time.replace("Z", "+00:00")
+                        )
                     except (ValueError, AttributeError):
                         pass
 

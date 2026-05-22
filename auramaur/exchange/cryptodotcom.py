@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +43,9 @@ _SANDBOX_BASE = "https://uat-api.3ona.co/exchange/v1"
 _PROD_BASE = "https://api.crypto.com/exchange/v1"
 
 
-def _sign_request(api_key: str, api_secret: str, method: str, params: dict, nonce: int) -> str:
+def _sign_request(
+    api_key: str, api_secret: str, method: str, params: dict, nonce: int
+) -> str:
     """Generate HMAC-SHA256 signature for Crypto.com API."""
     # Sort params alphabetically and concatenate
     param_str = ""
@@ -209,11 +210,16 @@ class CryptoComClient:
                 instruments = data.get("result", {}).get("instruments", [])
 
             for inst in instruments:
-                if inst.get("instrument_name") == market_id or inst.get("symbol") == market_id:
+                if (
+                    inst.get("instrument_name") == market_id
+                    or inst.get("symbol") == market_id
+                ):
                     return self._parse_market(inst)
             return None
         except Exception as e:
-            log.error("cryptodotcom.market_fetch_error", market_id=market_id, error=str(e))
+            log.error(
+                "cryptodotcom.market_fetch_error", market_id=market_id, error=str(e)
+            )
             return None
 
     async def search_markets(self, query: str, limit: int = 50) -> list[Market]:
@@ -224,7 +230,10 @@ class CryptoComClient:
 
             results: list[Market] = []
             for market in all_markets:
-                if query_lower in market.question.lower() or query_lower in market.description.lower():
+                if (
+                    query_lower in market.question.lower()
+                    or query_lower in market.description.lower()
+                ):
                     results.append(market)
                     if len(results) >= limit:
                         break
@@ -238,7 +247,11 @@ class CryptoComClient:
     # ------------------------------------------------------------------
 
     def prepare_order(
-        self, signal: Signal, market: Market, position_size: float, is_live: bool,
+        self,
+        signal: Signal,
+        market: Market,
+        position_size: float,
+        is_live: bool,
     ) -> Order | None:
         """Build a Crypto.com order from a signal.
 
@@ -422,7 +435,9 @@ class CryptoComClient:
                 is_paper=False,
             )
         except Exception as e:
-            log.error("cryptodotcom.order_status_error", order_id=order_id, error=str(e))
+            log.error(
+                "cryptodotcom.order_status_error", order_id=order_id, error=str(e)
+            )
             raise
 
     async def cancel_order(self, order_id: str) -> bool:
@@ -493,13 +508,20 @@ class CryptoComClient:
             if expiry:
                 try:
                     if isinstance(expiry, (int, float)):
-                        end_date = datetime.fromtimestamp(expiry / 1000, tz=timezone.utc)
+                        end_date = datetime.fromtimestamp(
+                            expiry / 1000, tz=timezone.utc
+                        )
                     elif isinstance(expiry, str):
                         end_date = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
                 except (ValueError, OSError):
                     pass
 
-            is_active = str(data.get("status", "")).upper() in ("ACTIVE", "OPEN", "TRADING", "")
+            is_active = str(data.get("status", "")).upper() in (
+                "ACTIVE",
+                "OPEN",
+                "TRADING",
+                "",
+            )
             category = data.get("category", "") or inst_type
 
             return Market(
