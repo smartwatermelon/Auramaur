@@ -50,11 +50,12 @@ if [[ "$MODE" == "--datasette" || "$MODE" == "--both" ]]; then
 fi
 
 if [[ "$MODE" == "--streamlit" || "$MODE" == "--both" ]]; then
+  # Bind to 0.0.0.0 for LAN access (private network, read-only dashboard)
   echo "Starting Streamlit → http://localhost:8501"
   uvx --with streamlit --with pandas --with pyyaml --with pydantic-settings --with cryptography \
     --with py-clob-client-v2 --with kalshi-python \
     streamlit run "$DASH" \
-    --server.port 8501 --server.address 127.0.0.1 --server.headless true &
+    --server.port 8501 --server.address 0.0.0.0 --server.headless true &
   PIDS+=($!)
 fi
 
