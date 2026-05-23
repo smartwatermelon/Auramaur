@@ -5,20 +5,24 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-DB="${AURAMAUR_DB:-}"
-if [[ -z "$DB" ]]; then
-  for candidate in \
-    "${HOME}/Library/Application Support/auramaur/auramaur-polymarket.db" \
-    "${REPO_ROOT}/auramaur-polymarket.db" \
-    "${REPO_ROOT}/auramaur.db"; do
-    if [[ -f "$candidate" ]]; then
-      DB="$candidate"
-      break
-    fi
-  done
-fi
 META="${SCRIPT_DIR}/metadata.yml"
 DASH="${SCRIPT_DIR}/dashboard.py"
+
+# Discover all exchange-namespaced DBs for datasette.
+# The Streamlit dashboard does its own discovery internally.
+DBS=()
+DATA_DIR="${HOME}/Library/Application Support/auramaur"
+for candidate in "${DATA_DIR}"/auramaur-*.db; do
+  [[ -f "$candidate" ]] && DBS+=("$candidate")
+done
+if [[ ${#DBS[@]} -eq 0 ]]; then
+  for candidate in \
+    "${REPO_ROOT}/auramaur-polymarket.db" \
+    "${REPO_ROOT}/auramaur-kalshi.db" \
+    "${REPO_ROOT}/auramaur.db"; do
+    [[ -f "$candidate" ]] && DBS+=("$candidate")
+  done
+fi
 
 MODE="${1:---both}"
 
@@ -30,8 +34,8 @@ case "$MODE" in
     ;;
 esac
 
-if [[ -z "$DB" || ! -f "$DB" ]]; then
-  echo "DB not found${DB:+: $DB} — run the bot at least once first, or set AURAMAUR_DB." >&2
+if [[ ${#DBS[@]} -eq 0 ]]; then
+  echo "No DBs found — run the bot at least once first." >&2
   exit 1
 fi
 
@@ -40,8 +44,8 @@ cleanup() { [[ ${#PIDS[@]} -gt 0 ]] && kill "${PIDS[@]}" 2>/dev/null || true; }
 trap cleanup INT TERM EXIT
 
 if [[ "$MODE" == "--datasette" || "$MODE" == "--both" ]]; then
-  echo "Starting Datasette → http://localhost:8001"
-  uvx datasette "$DB" --metadata "$META" --port 8001 &
+  echo "Starting Datasette → http://localhost:8001 (${#DBS[@]} DBs)"
+  uvx datasette "${DBS[@]}" --metadata "$META" --port 8001 &
   PIDS+=($!)
 fi
 
