@@ -98,7 +98,7 @@ trap - TERM
 # gates required for real orders (see config/settings.py::is_live).
 # Exchanges not listed here default to paper mode.
 case "${EXCHANGE}" in
-  kalshi) export AURAMAUR_LIVE=true ;;
+  kalshi | polymarket) export AURAMAUR_LIVE=true ;;
   *) export AURAMAUR_LIVE=false ;;
 esac
 
@@ -107,8 +107,7 @@ esac
 if [[ "${EXCHANGE}" == "polymarket" ]]; then
   log "Checking gluetun proxy at localhost:8888..."
   for _attempt in $(seq 1 12); do
-    if curl -sf --proxy http://localhost:8888 --max-time 5 https://ipinfo.io/ip >/dev/null 2>&1; then
-      proxy_ip=$(curl -sf --proxy http://localhost:8888 --max-time 5 https://ipinfo.io/ip)
+    if proxy_ip=$(curl -sf --proxy http://localhost:8888 --max-time 5 https://ipinfo.io/ip 2>/dev/null); then
       log "Gluetun proxy ready (exit IP: ${proxy_ip})"
       break
     fi
