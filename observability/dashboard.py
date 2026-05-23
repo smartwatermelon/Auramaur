@@ -1,5 +1,6 @@
 """Auramaur live Streamlit dashboard — auto-refreshes every 30 s."""
 
+import json
 import os
 import sqlite3
 import sys
@@ -65,6 +66,186 @@ def fetch_all(sql: str, params=(), *, tag_exchange: bool = False) -> pd.DataFram
     return pd.concat(frames, ignore_index=True)
 
 
+# ── Exchange API queries (ground truth) ──────────────────────────────────────
+
+
+_MIN_POSITION_TOKENS = 0.01
+
+
+@st.cache_data(ttl=60)
+def _fetch_kalshi_account() -> tuple[float, list[dict]] | None:
+    """Query Kalshi Portfolio API. Returns (cash_balance, positions) or None."""
+    cfg = _settings.kalshi
+    api_key = cfg.api_key or _settings.kalshi_api_key
+    priv_key_path = cfg.private_key_path or _settings.kalshi_private_key_path
+    if not api_key or not priv_key_path:
+        return None
+    from pathlib import Path
+
+    if not Path(priv_key_path).exists():
+        st.warning(f"Kalshi: private key not found at {priv_key_path}")
+        return None
+    try:
+        from kalshi_python import KalshiClient as _KalshiSDK
+        from kalshi_python import Configuration, PortfolioApi
+
+        host = (
+            "https://demo-api.kalshi.co/trade-api/v2"
+            if cfg.environment == "demo"
+            else "https://api.elections.kalshi.com/trade-api/v2"
+        )
+        configuration = Configuration(host=host)
+        client = _KalshiSDK(configuration=configuration)
+        client.set_kalshi_auth(key_id=api_key, private_key_path=priv_key_path)
+        portfolio_api = PortfolioApi(client)
+
+        # Kalshi balance is in cents
+        bal_resp = portfolio_api.get_balance()
+        cash = float(bal_resp.balance) / 100
+
+        pos_resp = portfolio_api.get_positions_without_preload_content()
+        try:
+            data = json.loads(pos_resp.data)
+        except (json.JSONDecodeError, TypeError):
+            st.warning("Kalshi: could not parse positions response")
+            return None
+        positions = []
+        for p in data.get("market_positions", []):
+            if "position_fp" not in p:
+                continue
+            # position_fp: positive = long YES, negative = short NO
+            pos_fp = float(p.get("position_fp") or 0)
+            if pos_fp == 0:
+                continue
+            contracts = abs(pos_fp)
+            exposure = float(p.get("market_exposure_dollars") or 0)
+            positions.append(
+                {
+                    "market": p.get("ticker", ""),
+                    "side": "NO" if pos_fp < 0 else "YES",
+                    "contracts": round(contracts, 2),
+                    "exposure": round(exposure, 2),
+                    "avg_price": (
+                        round(exposure / contracts, 4) if contracts > 0 else 0
+                    ),
+                }
+            )
+        return (cash, positions)
+    except Exception as exc:
+        st.warning(f"Kalshi API: {type(exc).__name__}: {exc}")
+        return None
+
+
+@st.cache_data(ttl=60)
+def _fetch_polymarket_account() -> tuple[float, list[dict]] | None:
+    """Query Polymarket CLOB API. Returns (collateral, positions) or None.
+
+    Position reconstruction mirrors auramaur/exchange/client.py _load_real_positions():
+    get_trades() on an authenticated ClobClient returns only this account's trades.
+    Each trade is classified as maker (matched via proxy address in maker_orders) or
+    taker (trader_side == TAKER). Net position per asset_id = sum(BUY) - sum(SELL).
+    """
+    if not (
+        _settings.polymarket_api_key
+        and _settings.polymarket_api_secret
+        and _settings.polymarket_passphrase
+        and _settings.polymarket_proxy_address
+        and _settings.polygon_private_key
+    ):
+        return None
+    try:
+        from py_clob_client_v2 import (
+            ApiCreds,
+            AssetType,
+            BalanceAllowanceParams,
+            ClobClient,
+        )
+
+        proxy = _settings.polymarket_proxy_address
+        creds = ApiCreds(
+            api_key=_settings.polymarket_api_key,
+            api_secret=_settings.polymarket_api_secret,
+            api_passphrase=_settings.polymarket_passphrase,
+        )
+        clob = ClobClient(
+            "https://clob.polymarket.com",
+            chain_id=137,
+            key=_settings.polygon_private_key,
+            creds=creds,
+            signature_type=2,
+            funder=proxy,
+        )
+
+        resp = clob.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=2)
+        )
+        if not isinstance(resp, dict) or "balance" not in resp:
+            st.warning("Polymarket balance query returned unexpected format")
+            return None
+        # Polymarket collateral is in µUSDC (micro-units)
+        try:
+            collateral = float(resp["balance"]) / 1e6
+        except (ValueError, TypeError):
+            st.warning("Polymarket: could not parse balance value")
+            return None
+
+        trades = clob.get_trades()
+        net: dict[str, dict] = {}
+        proxy_lower = proxy.lower()
+
+        for t in trades or []:
+            if t.get("status") != "CONFIRMED":
+                continue
+            asset_id = side = None
+            size = 0.0
+
+            # Maker-side: proxy address appears in maker_orders
+            for mo in t.get("maker_orders", []):
+                if mo.get("maker_address", "").lower() == proxy_lower:
+                    asset_id = mo.get("asset_id")
+                    side = mo.get("side")
+                    size = float(mo.get("matched_amount") or 0)
+                    break
+
+            # Taker-side: account took the other side of the trade
+            if not asset_id and t.get("trader_side") == "TAKER":
+                asset_id = t.get("asset_id")
+                side = t.get("side")
+                size = float(t.get("size") or 0)
+
+            if asset_id and side in ("BUY", "SELL") and size > 0:
+                if asset_id not in net:
+                    net[asset_id] = {
+                        "market": t.get("market", ""),
+                        "outcome": t.get("outcome", ""),
+                        "net": 0.0,
+                        "last_price": 0.0,
+                    }
+                if side == "BUY":
+                    net[asset_id]["net"] += size
+                else:
+                    net[asset_id]["net"] -= size
+                net[asset_id]["last_price"] = float(t.get("price") or 0)
+
+        positions = []
+        for _aid, pos in net.items():
+            if abs(pos["net"]) < _MIN_POSITION_TOKENS:
+                continue
+            positions.append(
+                {
+                    "market": pos["market"],
+                    "outcome": pos["outcome"],
+                    "tokens": round(pos["net"], 2),
+                    "last_price": round(pos["last_price"], 4),
+                    "est_value": round(pos["net"] * pos["last_price"], 2),
+                }
+            )
+        return (collateral, positions)
+    except Exception as exc:
+        st.warning(f"Polymarket API: {type(exc).__name__}: {exc}")
+        return None
+
+
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -80,7 +261,79 @@ if not _cached_discover_dbs():
     st.error("No databases found. Run the bot at least once first.")
     st.stop()
 
-# ── Top-line metrics ──────────────────────────────────────────────────────────
+# ── Account Overview (exchange APIs) ─────────────────────────────────────────
+
+kalshi_result = _fetch_kalshi_account()
+poly_result = _fetch_polymarket_account()
+
+if kalshi_result is not None or poly_result is not None:
+    st.subheader("Account Overview")
+
+    kalshi_total = 0.0
+    poly_total = 0.0
+    kalshi_cash = kalshi_pos_value = 0.0
+    poly_collateral = poly_pos_value = 0.0
+    kalshi_positions: list[dict] = []
+    poly_positions: list[dict] = []
+
+    if kalshi_result is not None:
+        kalshi_cash, kalshi_positions = kalshi_result
+        kalshi_pos_value = sum(p["exposure"] for p in kalshi_positions)
+        kalshi_total = kalshi_cash + kalshi_pos_value
+
+    if poly_result is not None:
+        poly_collateral, poly_positions = poly_result
+        poly_pos_value = sum(p["est_value"] for p in poly_positions)
+        poly_total = poly_collateral + poly_pos_value
+
+    combined = kalshi_total + poly_total
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Portfolio", f"${combined:,.2f}")
+    if kalshi_result is not None:
+        c2.metric("Kalshi", f"${kalshi_total:,.2f}")
+    else:
+        c2.metric("Kalshi", "N/A", help="No Kalshi API credentials configured")
+    if poly_result is not None:
+        c3.metric("Polymarket", f"${poly_total:,.2f}")
+    else:
+        c3.metric("Polymarket", "N/A", help="No Polymarket API credentials configured")
+
+    acct_left, acct_right = st.columns(2)
+
+    with acct_left:
+        if kalshi_result is not None and kalshi_positions:
+            st.caption(
+                f"Kalshi — Cash: ${kalshi_cash:,.2f} · "
+                f"{len(kalshi_positions)} positions"
+            )
+            st.dataframe(
+                pd.DataFrame(kalshi_positions),
+                use_container_width=True,
+                hide_index=True,
+            )
+        elif kalshi_result is not None:
+            st.caption(f"Kalshi — Cash: ${kalshi_cash:,.2f} · No open positions")
+
+    with acct_right:
+        if poly_result is not None and poly_positions:
+            st.caption(
+                f"Polymarket — Collateral: ${poly_collateral:,.2f} · "
+                f"{len(poly_positions)} positions"
+            )
+            st.dataframe(
+                pd.DataFrame(poly_positions),
+                use_container_width=True,
+                hide_index=True,
+            )
+        elif poly_result is not None:
+            st.caption(
+                f"Polymarket — Collateral: ${poly_collateral:,.2f} · No open positions"
+            )
+
+    st.divider()
+
+# ── Bot-tracked metrics ──────────────────────────────────────────────────────
 
 pos_df = fetch_all(
     """
@@ -133,12 +386,12 @@ else:
 
 st.divider()
 
-# ── Open positions ────────────────────────────────────────────────────────────
+# ── Bot-tracked positions ─────────────────────────────────────────────────────
 
 left, right = st.columns([3, 2])
 
 with left:
-    st.subheader("Open Positions")
+    st.subheader("Bot-Tracked Positions")
     pos_table = fetch_all(
         """
         SELECT
