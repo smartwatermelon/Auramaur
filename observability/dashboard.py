@@ -172,12 +172,12 @@ def _fetch_polymarket_account() -> tuple[float, list[dict]] | None:
             chain_id=137,
             key=_settings.polygon_private_key,
             creds=creds,
-            signature_type=2,
+            signature_type=3,
             funder=proxy,
         )
 
         resp = clob.get_balance_allowance(
-            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=2)
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=3)
         )
         if not isinstance(resp, dict) or "balance" not in resp:
             st.warning("Polymarket balance query returned unexpected format")

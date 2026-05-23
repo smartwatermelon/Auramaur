@@ -881,7 +881,7 @@ class AuramaurBot:
                 BalanceAllowanceParams(
                     asset_type=AssetType.CONDITIONAL,
                     token_id=token_id,
-                    signature_type=2,
+                    signature_type=3,
                 )
             )
             onchain = int(bal.get("balance", 0)) / 1e6

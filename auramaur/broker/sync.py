@@ -206,7 +206,7 @@ class PositionSyncer:
 
             resp = client.get_balance_allowance(
                 BalanceAllowanceParams(
-                    asset_type=AssetType.COLLATERAL, signature_type=2
+                    asset_type=AssetType.COLLATERAL, signature_type=3
                 )
             )
             total = int(resp.get("balance", 0)) / 1e6 if isinstance(resp, dict) else 0.0

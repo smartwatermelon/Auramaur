@@ -163,7 +163,7 @@ Streamlit observability dashboard:
 # From ~/Developer/Auramaur/observability/
 ./launch.sh
 # Accessible at http://localhost:8501
-# For LAN access: change --server.address to 0.0.0.0 in launch.sh
+# Binds to 0.0.0.0 by default for LAN access
 ```
 
 ### Database
