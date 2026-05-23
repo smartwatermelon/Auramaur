@@ -51,7 +51,7 @@ fi
 
 if [[ "$MODE" == "--streamlit" || "$MODE" == "--both" ]]; then
   echo "Starting Streamlit → http://localhost:8501"
-  uvx --with streamlit --with pandas --with pyyaml --with pydantic-settings streamlit run "$DASH" \
+  uvx --with streamlit --with pandas --with pyyaml --with pydantic-settings --with cryptography streamlit run "$DASH" \
     --server.port 8501 --server.address 127.0.0.1 --server.headless true &
   PIDS+=($!)
 fi
