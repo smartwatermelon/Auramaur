@@ -19,4 +19,4 @@ if [[ ! -d "${REPO}" ]]; then
 fi
 
 log "Starting observability stack (Datasette :8001, Streamlit :8501)"
-exec "${REPO}/observability/launch.sh" --both
+AURAMAUR_DASHBOARD_MODE=live exec "${REPO}/observability/launch.sh" --both

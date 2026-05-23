@@ -17,7 +17,9 @@ from config.settings import Settings  # noqa: E402
 
 _settings = Settings()
 PAPER_INITIAL_BALANCE: float = _settings.execution.paper_initial_balance
-IS_PAPER: int = 0 if _settings.is_live else 1
+_dashboard_mode = os.environ.get("AURAMAUR_DASHBOARD_MODE", "").lower()
+_is_live = _dashboard_mode == "live" if _dashboard_mode else _settings.is_live
+IS_PAPER: int = 0 if _is_live else 1
 REFRESH_SECONDS = 30
 
 
@@ -71,7 +73,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-mode_label = "LIVE" if _settings.is_live else "PAPER"
+mode_label = "LIVE" if _is_live else "PAPER"
 st.title(f"📈 Auramaur — {mode_label} Dashboard")
 
 if not _cached_discover_dbs():
@@ -95,7 +97,7 @@ open_count = int(pos_df["open_count"].sum()) if not pos_df.empty else 0
 unrealized_pnl = float(pos_df["unrealized_pnl"].sum()) if not pos_df.empty else 0.0
 market_value = float(pos_df["market_value"].sum()) if not pos_df.empty else 0.0
 
-if _settings.is_live:
+if _is_live:
     col1, col2, col3 = st.columns(3)
     col1.metric("Market Value", f"${market_value:,.2f}")
     col2.metric("Unrealized P&L", f"${unrealized_pnl:+,.2f}")
@@ -213,7 +215,7 @@ st.divider()
 # ── Cumulative cash-flow chart ────────────────────────────────────────────────
 
 st.subheader("Cumulative Cash Flow (paper trades)")
-if _settings.is_live:
+if _is_live:
     st.info("Cash flow chart available in paper mode only.")
 else:
     trades_df = fetch_all(
