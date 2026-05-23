@@ -172,7 +172,7 @@ class PolymarketClient:
             chain_id=chain_id,
             key=self._settings.polygon_private_key,
             creds=creds,
-            signature_type=2,  # POLY_GNOSIS_SAFE (Polymarket proxy wallet)
+            signature_type=3,  # POLY_1271 (Polymarket deposit wallet)
             funder=proxy if proxy else None,
         )
 
@@ -182,7 +182,7 @@ class PolymarketClient:
 
             self._clob_client.update_balance_allowance(
                 BalanceAllowanceParams(
-                    asset_type=AssetType.COLLATERAL, signature_type=2
+                    asset_type=AssetType.COLLATERAL, signature_type=3
                 )
             )
             log.info("clob_client.collateral_approved")
@@ -343,7 +343,7 @@ class PolymarketClient:
                         BalanceAllowanceParams(
                             asset_type=AssetType.CONDITIONAL,
                             token_id=order.token_id,
-                            signature_type=2,
+                            signature_type=3,
                         )
                     )
                     self._approved_tokens.add(order.token_id)
