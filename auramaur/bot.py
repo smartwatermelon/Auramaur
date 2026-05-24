@@ -611,6 +611,14 @@ class AuramaurBot:
         while self._running:
             if await self._check_kill_switch():
                 return
+            # Skip scan while VPN proxy is down — discovery calls timeout
+            # through the broken proxy and provide no useful data.
+            if self._vpn_down:
+                log.info("market_scan.skipped_vpn_down", exchange=name)
+                await asyncio.sleep(
+                    self._adaptive_interval(self.settings.intervals.market_scan_seconds)
+                )
+                continue
             try:
                 await engine.scan_and_store_markets()
             except Exception as e:
@@ -631,6 +639,16 @@ class AuramaurBot:
         while self._running:
             if await self._check_kill_switch():
                 return
+            # Skip cycle while VPN proxy is down — NLP analysis and order
+            # placement both require the proxy. Running the cycle would burn
+            # Claude API tokens on analysis whose resulting orders can never
+            # reach the CLOB.
+            if self._vpn_down:
+                log.info("trading_cycle.skipped_vpn_down", exchange=name)
+                await asyncio.sleep(
+                    self._adaptive_interval(self.settings.intervals.analysis_seconds)
+                )
+                continue
 
             try:
                 cash = getattr(self, "_last_known_cash", 0.0)
