@@ -103,6 +103,61 @@ class TestAsyncRetry:
         assert call_count == 1  # Not retried
 
 
+class TestAsyncRetryFallback:
+    """Test the fallback parameter — return value instead of re-raising."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_returned_on_exhaustion(self):
+        @async_retry(max_attempts=2, backoff_seconds=[0.01], fallback=False)
+        async def always_fail():
+            raise ConnectionError("refused")
+
+        with patch("auramaur.infra.retry._check_vpn_health", return_value=True):
+            result = await always_fail()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_fallback_with_on_exhausted_callback(self):
+        captured = None
+
+        def on_exhausted(exc):
+            nonlocal captured
+            captured = exc
+
+        @async_retry(
+            max_attempts=2,
+            backoff_seconds=[0.01],
+            on_exhausted=on_exhausted,
+            fallback=0,
+        )
+        async def always_fail():
+            raise OSError("down")
+
+        with patch("auramaur.infra.retry._check_vpn_health", return_value=True):
+            result = await always_fail()
+        assert result == 0
+        assert captured is not None
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_still_raises(self):
+        @async_retry(max_attempts=2, backoff_seconds=[0.01])
+        async def always_fail():
+            raise ConnectionError("refused")
+
+        with patch("auramaur.infra.retry._check_vpn_health", return_value=True):
+            with pytest.raises(ConnectionError):
+                await always_fail()
+
+    @pytest.mark.asyncio
+    async def test_fallback_not_used_on_success(self):
+        @async_retry(max_attempts=3, backoff_seconds=[0.01], fallback="WRONG")
+        async def succeed():
+            return "ok"
+
+        result = await succeed()
+        assert result == "ok"
+
+
 class TestAsyncRetryOnSyncMethod:
     """Test that async_retry works on sync methods wrapped as coroutines."""
 

@@ -18,8 +18,11 @@ from auramaur.exchange.models import (
     TokenType,
 )
 from auramaur.exchange.paper import PaperTrader
+from auramaur.infra.notify import send_alert_rate_limited
+from auramaur.infra.retry import async_retry
 
 log = structlog.get_logger()
+
 
 # Map CLOB API status strings to our OrderResult status literals
 _CLOB_STATUS_MAP: dict[str, str] = {
@@ -407,6 +410,14 @@ class PolymarketClient:
 
         except Exception as e:
             log.error("order.live_error", error=str(e), market_id=order.market_id)
+            try:
+                send_alert_rate_limited(
+                    subject="[auramaur] polymarket: order failed",
+                    body=f"place_order failed.\nMarket: {order.market_id}\nError: {type(e).__name__}: {str(e)[:200]}",
+                    key="place_order",
+                )
+            except Exception:
+                log.error("order.alert_failed", market_id=order.market_id)
             return OrderResult(
                 order_id="ERROR",
                 market_id=order.market_id,
@@ -423,6 +434,7 @@ class PolymarketClient:
             post_only=want_post_only,
         )
 
+    @async_retry()
     async def get_order_status(self, order_id: str) -> OrderResult:
         """Query the CLOB API for the current status of an order.
 
@@ -434,6 +446,9 @@ class PolymarketClient:
         self._init_clob_client()
         try:
             raw = self._clob_client.get_order(order_id)
+        except OSError as e:
+            log.warning("order_status.network_error", order_id=order_id, error=str(e))
+            raise
         except Exception as e:
             log.error("order_status.error", order_id=order_id, error=str(e))
             raise
@@ -468,6 +483,7 @@ class PolymarketClient:
             log.error("order_status.parse_error", order_id=order_id, error=str(e))
             raise
 
+    @async_retry(fallback=False)
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel a live order on the CLOB. Returns True on success."""
         self._init_clob_client()
@@ -476,10 +492,14 @@ class PolymarketClient:
             self._live_pending.pop(order_id, None)
             log.info("order.cancelled", order_id=order_id)
             return True
+        except OSError as e:
+            log.warning("cancel_order.network_error", order_id=order_id, error=str(e))
+            raise
         except Exception as e:
             log.error("order_cancel.error", order_id=order_id, error=str(e))
             return False
 
+    @async_retry(fallback=0)
     async def cancel_open_orders_for_token(self, token_id: str) -> int:
         """Cancel all open CLOB orders for a specific conditional token.
 
@@ -510,6 +530,11 @@ class PolymarketClient:
                 for oid in cancelled if isinstance(cancelled, list) else []:
                     self._live_pending.pop(str(oid), None)
             return count
+        except OSError as e:
+            log.warning(
+                "cancel_batch.network_error", token_id=token_id[:20], error=str(e)
+            )
+            raise
         except Exception as e:
             log.warning(
                 "order.stale_cancel_error",
@@ -551,6 +576,7 @@ class PolymarketClient:
             is_paper=False,
         )
 
+    @async_retry(fallback=OrderBook())
     async def get_order_book(self, token_id: str) -> OrderBook:
         """Get order book for a token (public, no auth needed)."""
         from auramaur.exchange.models import OrderBook
@@ -592,6 +618,9 @@ class PolymarketClient:
                 for a in raw_asks
             ]
             return OrderBook(bids=bids, asks=asks)
+        except OSError as e:
+            log.warning("orderbook.network_error", token_id=token_id[:20], error=str(e))
+            raise
         except Exception as e:
             log.error("orderbook.error", token_id=token_id[:20], error=str(e))
             return OrderBook()

@@ -11,6 +11,8 @@ import structlog
 
 log = structlog.get_logger()
 
+_UNSET = object()
+
 
 async def _check_vpn_health(timeout: float = 3.0) -> bool:
     """Returns True if the Gluetun HTTP proxy at localhost:8888 is reachable."""
@@ -44,8 +46,14 @@ def async_retry(
     backoff_seconds: list[float] | None = None,
     retryable: tuple[type[Exception], ...] | None = None,
     on_exhausted: Callable[[Exception], None] | None = None,
+    fallback: Any = _UNSET,
 ) -> Callable:
-    """Decorator for async methods. Retries on transient network errors."""
+    """Decorator for async methods. Retries on transient network errors.
+
+    When *fallback* is provided and retries exhaust, the fallback value is
+    returned instead of re-raising the last exception.  ``on_exhausted`` is
+    still called (if set) before returning.
+    """
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
     if backoff_seconds is None:
@@ -98,6 +106,14 @@ def async_retry(
                     on_exhausted(last_error)
                 except Exception as cb_err:
                     log.error("retry.callback_failed", error=type(cb_err).__name__)
+
+            if fallback is not _UNSET:
+                log.warning(
+                    "retry.fallback",
+                    method=fn.__qualname__,
+                    error=type(last_error).__name__,
+                )
+                return fallback
 
             raise last_error  # type: ignore[misc]
 
