@@ -31,6 +31,28 @@ log() {
   printf '[%s] [auramaur-%s] %s\n' "${_ts}" "${EXCHANGE}" "$*"
 }
 
+# --- Alert email via msmtp ---
+MAIL_TO="${AURAMAUR_ALERT_TO:-andrew.rich@gmail.com}"
+MAIL_FROM="${AURAMAUR_ALERT_FROM:-andrew.rich@gmail.com}"
+
+send_alert() {
+  local subject="$1" body="$2"
+  if ! command -v msmtp >/dev/null 2>&1; then
+    log "WARN: msmtp not found — alert not sent: ${subject}"
+    return 1
+  fi
+  printf 'From: %s\nTo: %s\nSubject: %s\n\n%s\n' \
+    "${MAIL_FROM}" "${MAIL_TO}" "${subject}" "${body}" \
+    | msmtp -a gmail "${MAIL_TO}" 2>/dev/null
+  local rc=$?
+  if [[ ${rc} -eq 0 ]]; then
+    log "Alert sent: ${subject}"
+  else
+    log "WARN: msmtp failed (rc=${rc}) — alert not sent: ${subject}"
+  fi
+  return ${rc}
+}
+
 unlock_keychain() {
   if security unlock-keychain -p '' "${KEYCHAIN}" 2>/dev/null; then
     return 0
@@ -118,6 +140,63 @@ if [[ "${EXCHANGE}" == "polymarket" ]]; then
     sleep 5
   done
 fi
+
+# --- Crash counter: detect rapid crash loops ---
+CRASH_THRESHOLD="${AURAMAUR_CRASH_THRESHOLD:-3}"
+CRASH_WINDOW="${AURAMAUR_CRASH_WINDOW:-600}"
+CRASH_FILE="/tmp/auramaur-${EXCHANGE}-crashes"
+STARTED_FILE="/tmp/auramaur-${EXCHANGE}-started"
+
+now=$(date +%s)
+
+# If the bot ran for >60s last time, it was a healthy session — clear history
+if [[ -f "${STARTED_FILE}" ]]; then
+  last_start=$(cat "${STARTED_FILE}" 2>/dev/null || echo "0")
+  elapsed=$((now - last_start))
+  if [[ ${elapsed} -gt 60 ]]; then
+    rm -f "${CRASH_FILE}"
+  fi
+fi
+
+# Record this crash (wrapper runs = bot died or first start)
+if [[ -f "${CRASH_FILE}" ]]; then
+  # Filter to entries within the crash window
+  recent_crashes=""
+  while IFS= read -r ts; do
+    [[ -z "${ts}" ]] && continue
+    age=$((now - ts))
+    if [[ ${age} -le ${CRASH_WINDOW} ]]; then
+      recent_crashes="${recent_crashes}${ts}\n"
+    fi
+  done <"${CRASH_FILE}"
+  printf '%b%s\n' "${recent_crashes}" "${now}" >"${CRASH_FILE}"
+else
+  echo "${now}" >"${CRASH_FILE}"
+fi
+
+# Count recent crashes
+crash_count=0
+while IFS= read -r ts; do
+  [[ -n "${ts}" ]] && crash_count=$((crash_count + 1))
+done <"${CRASH_FILE}"
+
+if [[ ${crash_count} -ge ${CRASH_THRESHOLD} ]]; then
+  log "ERROR: ${crash_count} crashes in ${CRASH_WINDOW}s — suspending auto-restart"
+  crash_ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  send_alert \
+    "[auramaur] ${EXCHANGE} bot: ${crash_count} crashes in $((CRASH_WINDOW / 60)) minutes" \
+    "Auramaur ${EXCHANGE} bot has crashed ${crash_count} times in the last $((CRASH_WINDOW / 60)) minutes.
+Automatic restarts have been suspended. Manual intervention required.
+
+Last crash: ${crash_ts}
+Log: ~/Library/Logs/auramaur/${EXCHANGE}.log
+
+To restart: launchctl start com.auramaur.${EXCHANGE}"
+  exit 0 # Clean exit — stops KeepAlive:Crashed from restarting
+fi
+
+# Record start time for healthy-session detection
+echo "${now}" >"${STARTED_FILE}"
 
 log "Starting bot (exchange=${EXCHANGE}, live=${AURAMAUR_LIVE:-false})"
 
