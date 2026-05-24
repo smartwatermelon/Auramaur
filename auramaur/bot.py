@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import structlog
@@ -21,6 +22,8 @@ from auramaur.exchange.gamma import GammaClient
 from auramaur.exchange.models import Order, OrderSide, OrderType, TokenType
 from auramaur.exchange.protocols import ExchangeClient, MarketDiscovery
 from auramaur.exchange.paper import PaperTrader
+from auramaur.infra.notify import send_alert_rate_limited
+from auramaur.infra.retry import _check_vpn_health
 from auramaur.monitoring.alerts import AlertManager
 from auramaur.monitoring.display import (
     console,
@@ -66,6 +69,15 @@ class AuramaurBot:
         # Track attempted cross-exchange arbs so the scanner doesn't re-execute
         # the same opportunity every 5-minute cycle. Maps arb-key -> expiry ts.
         self._arb_attempts: dict[str, float] = {}
+        # VPN watchdog state — tracks whether the Gluetun proxy is reachable.
+        # _task_vpn_watchdog sets these; _task_trading_cycle and _task_market_scan
+        # check _vpn_down to skip iterations when the proxy is unreachable,
+        # avoiding wasted Claude API tokens on analysis that can never execute
+        # (all CLOB requests timeout through the proxy).
+        # Note: _vpn_down_since is in-memory only — resets to None on restart,
+        # so recovery alerts after a restart report 0 minutes downtime.
+        self._vpn_down: bool = False
+        self._vpn_down_since: float | None = None  # monotonic timestamp
 
     def _acquire_db_path(self) -> str:
         """Find an available database slot using file locks.
@@ -599,6 +611,14 @@ class AuramaurBot:
         while self._running:
             if await self._check_kill_switch():
                 return
+            # Skip scan while VPN proxy is down — discovery calls timeout
+            # through the broken proxy and provide no useful data.
+            if self._vpn_down:
+                log.info("market_scan.skipped_vpn_down", exchange=name)
+                await asyncio.sleep(
+                    self._adaptive_interval(self.settings.intervals.market_scan_seconds)
+                )
+                continue
             try:
                 await engine.scan_and_store_markets()
             except Exception as e:
@@ -619,6 +639,16 @@ class AuramaurBot:
         while self._running:
             if await self._check_kill_switch():
                 return
+            # Skip cycle while VPN proxy is down — NLP analysis and order
+            # placement both require the proxy. Running the cycle would burn
+            # Claude API tokens on analysis whose resulting orders can never
+            # reach the CLOB.
+            if self._vpn_down:
+                log.info("trading_cycle.skipped_vpn_down", exchange=name)
+                await asyncio.sleep(
+                    self._adaptive_interval(self.settings.intervals.analysis_seconds)
+                )
+                continue
 
             try:
                 cash = getattr(self, "_last_known_cash", 0.0)
@@ -1006,6 +1036,93 @@ class AuramaurBot:
             except Exception:
                 pass
             await asyncio.sleep(300)
+
+    async def _task_vpn_watchdog(self) -> None:
+        """Monitor VPN proxy health and pause trading when the proxy is down.
+
+        Runs every 60 seconds. Uses _check_vpn_health() from retry.py to probe
+        the Gluetun HTTP proxy at localhost:8888. Manages a two-state machine:
+
+            HEALTHY -> DOWN:  probe fails -> set _vpn_down=True, log, send alert
+            DOWN -> HEALTHY:  probe passes -> set _vpn_down=False, log, send recovery alert
+
+        The wrapper-gluetun.sh handles remediation (container restart). This task
+        handles protection: pausing trading cycles so the bot doesn't waste Claude
+        API tokens on analysis that can never execute through a broken proxy.
+
+        Only started when the bot is filtering to polymarket or running all
+        exchanges. Kalshi-only instances skip it (Kalshi doesn't route through
+        the proxy).
+
+        Alert rate limiting during oscillation:
+            If the proxy oscillates (down -> up -> down within 1800s), the second
+            DOWN email is intentionally suppressed by send_alert_rate_limited
+            (key="vpn_down", interval=1800s). The state machine still toggles
+            _vpn_down correctly — only the email is deduplicated. Recovery emails
+            use a shorter interval (60s) so operators see the "back up" quickly.
+            The structlog events fire on every transition regardless of email
+            suppression, so the full timeline is always in the log.
+
+        Uses the module-level ``log`` (structlog.get_logger()) defined at the
+        top of bot.py for all logging calls.
+        """
+        while self._running:
+            try:
+                vpn_ok = await _check_vpn_health()
+
+                if vpn_ok and self._vpn_down:
+                    # RECOVERY: DOWN -> HEALTHY
+                    downtime_minutes = 0.0
+                    if self._vpn_down_since is not None:
+                        downtime_minutes = (
+                            time.monotonic() - self._vpn_down_since
+                        ) / 60.0
+                    self._vpn_down = False
+                    self._vpn_down_since = None
+                    log.info(
+                        "vpn_watchdog.recovered",
+                        downtime_minutes=round(downtime_minutes, 1),
+                    )
+                    send_alert_rate_limited(
+                        subject="[auramaur] polymarket: VPN proxy recovered — trading resumed",
+                        body=(
+                            "The Gluetun VPN proxy is reachable again.\n"
+                            "Trading cycles have resumed.\n"
+                            f"\nTime: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"
+                            f"\nDowntime: ~{round(downtime_minutes)} minutes"
+                        ),
+                        key="vpn_recovered",
+                        min_interval=60,
+                    )
+
+                elif not vpn_ok and not self._vpn_down:
+                    # TRANSITION: HEALTHY -> DOWN
+                    self._vpn_down = True
+                    self._vpn_down_since = time.monotonic()
+                    log.warning("vpn_watchdog.down")
+                    send_alert_rate_limited(
+                        subject="[auramaur] polymarket: VPN proxy down — trading paused",
+                        body=(
+                            "The Gluetun VPN proxy at localhost:8888 is unreachable.\n"
+                            "Trading cycles are paused until the proxy recovers.\n"
+                            "The gluetun wrapper will attempt auto-restart.\n"
+                            f"\nTime: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"
+                            "\nLog: ~/Library/Logs/auramaur/polymarket.log"
+                        ),
+                        key="vpn_down",
+                        min_interval=1800,
+                    )
+
+                # If vpn_ok and not _vpn_down: healthy, no action needed.
+                # If not vpn_ok and _vpn_down: still down — the elif guard
+                # prevents re-entering the DOWN transition. No email is sent
+                # (rate limiter is secondary; the branch isn't even reached).
+
+            except Exception as e:
+                # The watchdog must never crash — it's the safety net.
+                log.error("vpn_watchdog.error", error=str(e))
+
+            await asyncio.sleep(60)
 
     async def _task_redemption_check(self) -> None:
         """Periodically check for redeemable Polymarket positions.
@@ -2283,6 +2400,14 @@ class AuramaurBot:
         if self._components.get("syncer"):
             tasks.append(
                 asyncio.create_task(self._task_position_sync(), name="position_sync")
+            )
+
+        # VPN watchdog — monitors the Gluetun proxy and pauses trading if it
+        # goes down. Only needed when Polymarket is active (Kalshi doesn't route
+        # through the proxy). Runs every 60s, sends email alerts on transitions.
+        if self._exchange_filter is None or self._exchange_filter == "polymarket":
+            tasks.append(
+                asyncio.create_task(self._task_vpn_watchdog(), name="vpn_watchdog")
             )
 
         # Resolution checker and order monitor work with any exchange

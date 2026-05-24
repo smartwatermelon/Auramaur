@@ -29,6 +29,78 @@ log_ts() {
   printf '[%s] [auramaur-gluetun] %s\n' "${_ts}" "$*"
 }
 
+# --- Alert email via msmtp ---
+# Same pattern as wrapper-bot.sh — uses msmtp directly since this
+# script runs outside the Python venv.
+MAIL_TO="${AURAMAUR_ALERT_TO:-andrew.rich@gmail.com}"
+MAIL_FROM="${AURAMAUR_ALERT_FROM:-andrew.rich@gmail.com}"
+
+send_alert() {
+  # Send an email alert via msmtp. Args: $1=subject, $2=body.
+  # Non-fatal: if msmtp is missing or fails, log a warning and continue.
+  local subject="$1" body="$2"
+  if ! command -v msmtp >/dev/null 2>&1; then
+    log_ts "WARN: msmtp not found — alert not sent: ${subject}"
+    return 1
+  fi
+  printf 'From: %s\nTo: %s\nSubject: %s\n\n%s\n' \
+    "${MAIL_FROM}" "${MAIL_TO}" "${subject}" "${body}" \
+    | msmtp -a gmail "${MAIL_TO}" 2>/dev/null
+  local rc=$?
+  if [[ ${rc} -eq 0 ]]; then
+    log_ts "Alert sent: ${subject}"
+  else
+    log_ts "WARN: msmtp failed (rc=${rc}) — alert not sent: ${subject}"
+  fi
+  return ${rc}
+}
+
+check_proxy_health() {
+  # Probe the Gluetun HTTP proxy by requesting an external endpoint through it.
+  # If the probe fails, the container's tunnel is broken even though the
+  # container itself is "running". Restart the container and send an alert.
+  #
+  # Called from the supervision loop AFTER ensure_container() confirms the
+  # container is in "running" state. This catches the failure mode where
+  # OpenVPN routes go stale or DNS fails inside the container.
+  local proxy_ip restart_ts new_ip elapsed
+
+  if proxy_ip=$(curl -sf --proxy http://localhost:8888 --max-time 10 https://ipinfo.io/ip 2>/dev/null); then
+    log_ts "Proxy health OK (exit IP: ${proxy_ip})"
+    return 0
+  fi
+
+  log_ts "ERROR: proxy health check failed — restarting gluetun-vpn container"
+  podman restart gluetun-vpn 2>&1 || true
+
+  # Wait up to 60s for the container to reach "healthy" status.
+  # Podman's --health-start-period is 120s, but the proxy itself typically
+  # comes up much faster. Poll every 5s to detect recovery promptly.
+  elapsed=0
+  while [[ "${elapsed}" -lt 60 ]]; do
+    sleep 5
+    elapsed=$((elapsed + 5))
+    local health
+    health=$(podman inspect gluetun-vpn --format '{{.State.Health.Status}}' 2>/dev/null) || health=""
+    if [[ "${health}" == "healthy" ]]; then
+      break
+    fi
+  done
+
+  # Try to get the new exit IP for the alert
+  new_ip=$(curl -sf --proxy http://localhost:8888 --max-time 10 https://ipinfo.io/ip 2>/dev/null) || new_ip="unknown — healthcheck still pending"
+  restart_ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+  send_alert \
+    "[auramaur] gluetun: proxy broken, container restarted" \
+    "The Gluetun VPN proxy at localhost:8888 was unreachable.
+Container restarted at ${restart_ts}.
+New exit IP: ${new_ip}
+Log: ~/Library/Logs/auramaur/gluetun.log"
+
+  return 1
+}
+
 unlock_keychain() {
   if security unlock-keychain -p '' "${KEYCHAIN}" 2>/dev/null; then
     return 0
@@ -161,5 +233,10 @@ while true; do
 
   if ! ensure_container; then
     log_ts "WARNING: container recovery failed, will retry next cycle"
+    continue
   fi
+
+  # Probe the proxy — container is "running" but the tunnel may be broken.
+  # check_proxy_health() restarts and alerts if the probe fails.
+  check_proxy_health
 done
