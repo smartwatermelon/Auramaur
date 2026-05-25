@@ -90,8 +90,8 @@ class AuramaurBot:
 
         # Number of concurrent trading-cycle tasks (one per exchange).
         # Set by run() after engines are created. The cost enforcement
-        # watchdog divides the observed cycle count by this number so
-        # multi-exchange deployments don't false-trip the frequency cap.
+        # watchdog multiplies the cycle-rate cap by this number so
+        # multi-exchange deployments scale correctly and don't false-trip.
         self._engine_count: int = 1
 
     def _acquire_db_path(self) -> str:
