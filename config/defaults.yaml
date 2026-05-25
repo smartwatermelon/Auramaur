@@ -126,3 +126,10 @@ logging:
   level: "INFO"
   json_format: true
   file: "auramaur.log"
+
+profit_alerts:
+  enabled: true
+  check_interval_seconds: 3600     # check P&L once per hour
+  profit_threshold: 600.0          # alert when unrealized P&L >= $600
+  withdrawal_amount: 300.0         # recommend withdrawing $300
+  alert_cooldown_hours: 24         # don't repeat the alert more than once per day

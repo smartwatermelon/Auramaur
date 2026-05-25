@@ -292,6 +292,35 @@ class LoggingConfig(BaseModel):
     file: str = "auramaur.log"
 
 
+class ProfitAlertConfig(BaseModel):
+    """Config for profit withdrawal alert task.
+
+    When unrealized P&L crosses ``profit_threshold``, the bot sends an
+    email alert recommending withdrawal of ``withdrawal_amount``. This is
+    alert-only — no automatic sell or transfer logic.
+
+    Model default is ``enabled=False`` (conservative/safe). ``defaults.yaml``
+    opts in with ``enabled=true`` so the feature is active in normal operation
+    but off for any code that instantiates ``ProfitAlertConfig`` directly
+    without going through ``Settings``.
+    """
+
+    enabled: bool = False
+    check_interval_seconds: int = Field(default=3600, gt=0)
+    profit_threshold: float = Field(default=600.0, gt=0)
+    withdrawal_amount: float = Field(default=300.0, gt=0)
+    alert_cooldown_hours: int = Field(default=24, gt=0)
+
+    @model_validator(mode="after")
+    def validate_withdrawal_le_threshold(self) -> "ProfitAlertConfig":
+        if self.withdrawal_amount > self.profit_threshold:
+            raise ValueError(
+                f"withdrawal_amount ({self.withdrawal_amount}) must be "
+                f"<= profit_threshold ({self.profit_threshold})"
+            )
+        return self
+
+
 class Settings(BaseSettings):
     # API Keys
     anthropic_api_key_primary: str = ""
@@ -390,6 +419,9 @@ class Settings(BaseSettings):
     )
     logging: LoggingConfig = Field(
         default_factory=lambda: LoggingConfig(**_DEFAULTS.get("logging", {}))
+    )
+    profit_alerts: ProfitAlertConfig = Field(
+        default_factory=lambda: ProfitAlertConfig(**_DEFAULTS.get("profit_alerts", {}))
     )
 
     # Resolve .env to an absolute path anchored at the repo root so Settings

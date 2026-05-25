@@ -197,3 +197,62 @@ def test_yaml_defaults_safe():
     assert (
         raw["kelly"]["fraction"] <= 0.50
     ), "defaults.yaml kelly fraction must be <= 50%"
+
+
+def test_profit_alert_config_defaults():
+    """ProfitAlertConfig model defaults match the spec."""
+    from config.settings import ProfitAlertConfig
+
+    cfg = ProfitAlertConfig()
+    assert cfg.enabled is False
+    assert cfg.check_interval_seconds == 3600
+    assert cfg.profit_threshold == 600.0
+    assert cfg.withdrawal_amount == 300.0
+    assert cfg.alert_cooldown_hours == 24
+
+
+def test_profit_alert_config_from_yaml():
+    """Settings loads profit_alerts from defaults.yaml."""
+    s = Settings()
+    assert hasattr(s, "profit_alerts")
+    assert s.profit_alerts.enabled is True
+    assert s.profit_alerts.profit_threshold == 600.0
+    assert s.profit_alerts.withdrawal_amount == 300.0
+    assert s.profit_alerts.check_interval_seconds == 3600
+    assert s.profit_alerts.alert_cooldown_hours == 24
+
+
+def test_profit_alert_config_validation():
+    """ProfitAlertConfig rejects invalid numeric inputs."""
+    import pytest
+    from pydantic import ValidationError
+    from config.settings import ProfitAlertConfig
+
+    with pytest.raises(ValidationError, match="check_interval_seconds"):
+        ProfitAlertConfig(check_interval_seconds=0)
+
+    with pytest.raises(ValidationError, match="alert_cooldown_hours"):
+        ProfitAlertConfig(alert_cooldown_hours=0)
+
+    with pytest.raises(ValidationError, match="withdrawal_amount"):
+        ProfitAlertConfig(withdrawal_amount=-100.0)
+
+    with pytest.raises(ValidationError, match="withdrawal_amount"):
+        ProfitAlertConfig(profit_threshold=100.0, withdrawal_amount=200.0)
+
+
+def test_yaml_defaults_profit_alerts_safe():
+    """defaults.yaml profit_alerts section passes sensible bounds checks."""
+    import yaml
+    from pathlib import Path
+
+    defaults_path = Path(__file__).parent.parent / "config" / "defaults.yaml"
+    with open(defaults_path) as f:
+        raw = yaml.safe_load(f)
+
+    pa = raw.get("profit_alerts", {})
+    assert pa.get("check_interval_seconds", 0) > 0, "check_interval_seconds must be > 0"
+    assert pa.get("alert_cooldown_hours", 0) > 0, "alert_cooldown_hours must be > 0"
+    assert pa.get("withdrawal_amount", 0) <= pa.get(
+        "profit_threshold", 0
+    ), "withdrawal_amount must be <= profit_threshold"
