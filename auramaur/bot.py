@@ -22,7 +22,9 @@ from auramaur.exchange.gamma import GammaClient
 from auramaur.exchange.models import Order, OrderSide, OrderType, TokenType
 from auramaur.exchange.protocols import ExchangeClient, MarketDiscovery
 from auramaur.exchange.paper import PaperTrader
-from auramaur.infra.notify import send_alert_rate_limited
+from auramaur.infra.notify import (
+    send_alert_rate_limited,
+)  # used by _task_profit_withdrawal_alert
 from auramaur.infra.retry import _check_vpn_health
 from auramaur.monitoring.alerts import AlertManager
 from auramaur.monitoring.display import (
@@ -1181,6 +1183,72 @@ class AuramaurBot:
             if await self._check_kill_switch():
                 return
             await asyncio.sleep(1)
+
+    async def _task_profit_withdrawal_alert(self) -> None:
+        """Hourly check: alert when unrealized P&L crosses withdrawal threshold.
+
+        Calls the syncer to get current positions, computes unrealized P&L
+        via PnLTracker, and sends a rate-limited email when P&L >=
+        profit_threshold. Alert-only — no automatic sell or transfer.
+
+        Note: self.settings.profit_alerts is accessed directly (not via .get())
+        because ProfitAlertConfig is a required field with a default_factory in
+        Settings — it is always present, unlike optional _components entries.
+        """
+        cfg = self.settings.profit_alerts
+        syncer = self._components.get("syncer")
+        if syncer is None:
+            log.info("profit_alert.no_syncer")
+            return
+
+        pnl_tracker = self._components.get("pnl_tracker")
+        if pnl_tracker is None:
+            log.info("profit_alert.no_pnl_tracker")
+            return
+
+        while self._running:
+            if not cfg.enabled:
+                await asyncio.sleep(cfg.check_interval_seconds)
+                continue
+
+            try:
+                positions = await syncer.sync()
+                unrealized = await pnl_tracker.get_unrealized_pnl(positions)
+
+                if unrealized >= cfg.profit_threshold:
+                    log.info(
+                        "profit_alert.triggered",
+                        unrealized_pnl=round(unrealized, 2),
+                        threshold=cfg.profit_threshold,
+                        withdrawal=cfg.withdrawal_amount,
+                    )
+                    send_alert_rate_limited(
+                        subject=(
+                            f"[auramaur] profit alert: ${unrealized:.2f} unrealized"
+                            f" — consider withdrawing ${cfg.withdrawal_amount:.0f}"
+                        ),
+                        body=(
+                            f"Unrealized P&L has reached ${unrealized:.2f}"
+                            f" (threshold: ${cfg.profit_threshold:.2f}).\n"
+                            f"Recommended action: withdraw ${cfg.withdrawal_amount:.2f} from Polymarket.\n\n"
+                            f"Current positions: {len(positions)}\n"
+                            f"Unrealized P&L: ${unrealized:.2f}\n\n"
+                            f"This is an alert only — no automatic withdrawal will occur.\n"
+                            f"To change thresholds: edit profit_alerts in config/defaults.yaml\n"
+                        ),
+                        key="profit_withdrawal",
+                        min_interval=cfg.alert_cooldown_hours * 3600,
+                    )
+                else:
+                    log.debug(
+                        "profit_alert.below_threshold",
+                        unrealized_pnl=round(unrealized, 2),
+                        threshold=cfg.profit_threshold,
+                    )
+            except Exception:
+                log.exception("profit_alert.error")
+
+            await asyncio.sleep(cfg.check_interval_seconds)
 
     async def _task_recalibrate(self) -> None:
         """Periodically refit Platt scaling calibration parameters."""
@@ -2388,6 +2456,9 @@ class AuramaurBot:
             asyncio.create_task(self._task_kill_switch_monitor(), name="kill_switch"),
             asyncio.create_task(self._task_cache_cleanup(), name="cache_cleanup"),
             asyncio.create_task(self._task_recalibrate(), name="recalibrate"),
+            asyncio.create_task(
+                self._task_profit_withdrawal_alert(), name="profit_alert"
+            ),
         ]
 
         # Portfolio monitor runs whenever any exchange syncer is present so
