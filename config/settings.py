@@ -126,8 +126,8 @@ class IntervalsConfig(BaseModel):
     peak_hours_utc: list[int] = Field(
         default_factory=lambda: [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
     )
-    off_peak_multiplier: float = 4.0
-    quiet_multiplier: float = 8.0
+    off_peak_multiplier: float = 8.0
+    quiet_multiplier: float = 24.0
     quiet_hours_utc: list[int] = Field(
         default_factory=lambda: [4, 5, 6, 7, 8, 9],
     )
@@ -136,9 +136,9 @@ class IntervalsConfig(BaseModel):
 _INTENSITY_PRESETS: dict[str, dict] = {
     "low": {
         "skip_second_opinion": True,
-        "max_markets_per_cycle": 10,
+        "max_markets_per_cycle": 3,
         "evidence_per_source": 3,
-        "daily_claude_call_budget": 50,
+        "daily_claude_call_budget": 30,
     },
     "medium": {
         "skip_second_opinion": False,

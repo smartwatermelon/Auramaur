@@ -75,9 +75,9 @@ def test_intensity_low():
 
     cfg = NLPConfig(api_intensity="low")
     assert cfg.skip_second_opinion is True
-    assert cfg.max_markets_per_cycle == 10
+    assert cfg.max_markets_per_cycle == 3
     assert cfg.evidence_per_source == 3
-    assert cfg.daily_claude_call_budget == 50
+    assert cfg.daily_claude_call_budget == 30
 
 
 def test_intensity_full_blast():
@@ -144,6 +144,19 @@ def test_kalshi_private_key_invalid_pem_raises():
 
     with pytest.raises(ValueError, match="does not parse as a PEM"):
         Settings(kalshi_private_key="this is definitely not a PEM")
+
+
+def test_yaml_low_intensity_applies_preset():
+    """defaults.yaml sets api_intensity='low'. Verify the preset values
+    actually take effect through the full Settings() pipeline, not just
+    NLPConfig in isolation. This catches the bug where explicit YAML
+    overrides fought with the preset system."""
+    s = Settings()
+    assert s.nlp.api_intensity == "low"
+    assert s.nlp.skip_second_opinion is True
+    assert s.nlp.max_markets_per_cycle == 3
+    assert s.nlp.daily_claude_call_budget == 30
+    assert s.nlp.model == "sonnet"
 
 
 def test_yaml_defaults_safe():
