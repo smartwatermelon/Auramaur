@@ -42,7 +42,11 @@ def _make_bot(*, model: str = "sonnet", budget: int = 30):
 
 @pytest.mark.asyncio
 async def test_all_checks_pass_no_kill_switch():
-    """All checks pass — KILL_SWITCH not written."""
+    """All checks pass — KILL_SWITCH not written.
+
+    _get_schedule_mode is pinned to "peak" so the expected cycle cap is
+    deterministic regardless of wall-clock time or bot cash state.
+    """
     bot, analyzer = _make_bot(model="sonnet", budget=30)
     analyzer._daily_calls = 10
 
@@ -50,6 +54,7 @@ async def test_all_checks_pass_no_kill_switch():
     bot._cycle_timestamps = deque([now - 1800, now - 600], maxlen=200)
 
     with (
+        patch.object(bot, "_get_schedule_mode", return_value="peak"),
         patch("auramaur.bot.send_alert") as mock_alert,
         patch.object(Path, "write_text") as mock_write,
     ):
@@ -127,13 +132,18 @@ async def test_cycle_rate_exceeded_fires_kill_switch():
 
 @pytest.mark.asyncio
 async def test_budget_zero_unlimited_skips_check():
-    """Budget of 0 means unlimited — budget check skipped even with many calls."""
+    """Budget of 0 means unlimited — budget check skipped even with many calls.
+
+    _get_schedule_mode is pinned to "peak" so the cycle-frequency cap is
+    deterministic regardless of wall-clock time or bot cash state.
+    """
     bot, analyzer = _make_bot(model="sonnet", budget=0)
     analyzer._daily_calls = 500
 
     bot._cycle_timestamps = deque(maxlen=200)
 
     with (
+        patch.object(bot, "_get_schedule_mode", return_value="peak"),
         patch("auramaur.bot.send_alert") as mock_alert,
         patch.object(Path, "write_text") as mock_write,
     ):

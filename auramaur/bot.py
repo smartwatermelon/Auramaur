@@ -88,6 +88,12 @@ class AuramaurBot:
         # watchdog counts entries in the last 3600s to detect runaway cycles.
         self._cycle_timestamps: deque[float] = deque(maxlen=200)
 
+        # Number of concurrent trading-cycle tasks (one per exchange).
+        # Set by run() after engines are created. The cost enforcement
+        # watchdog divides the observed cycle count by this number so
+        # multi-exchange deployments don't false-trip the frequency cap.
+        self._engine_count: int = 1
+
     def _acquire_db_path(self) -> str:
         """Find an available database slot using file locks.
 
@@ -679,7 +685,8 @@ class AuramaurBot:
             return
         budget = self.settings.nlp.daily_claude_call_budget
         actual_calls = analyzer._daily_calls
-        if budget is not None and budget > 0 and actual_calls > budget:
+        # budget=0 means unlimited (full_blast preset); skip the check.
+        if budget > 0 and actual_calls > budget:
             await self._fire_cost_kill_switch(
                 f"daily budget exceeded: {actual_calls}/{budget} calls"
             )
@@ -709,7 +716,10 @@ class AuramaurBot:
                 multiplier=multiplier,
             )
             return
-        max_cycles_per_hour = (3600 / expected_interval) * 1.5
+        # Each exchange gets its own _task_trading_cycle, all appending to
+        # the shared _cycle_timestamps deque. Multiply the per-engine cap
+        # by the engine count so multi-exchange deployments don't false-trip.
+        max_cycles_per_hour = (3600 / expected_interval) * 1.5 * self._engine_count
 
         if cycles_last_hour > max_cycles_per_hour:
             await self._fire_cost_kill_switch(
@@ -2640,8 +2650,10 @@ class AuramaurBot:
                 asyncio.create_task(self._task_news_reactor(), name="news_reactor")
             )
 
-        # Per-exchange scan + trade tasks
+        # Per-exchange scan + trade tasks — also record engine count so the
+        # cost enforcement watchdog can normalise the cycle-rate check.
         engines: dict[str, TradingEngine] = self._components["engines"]
+        self._engine_count = max(len(engines), 1)
         for ex_name, engine in engines.items():
             tasks.append(
                 asyncio.create_task(
