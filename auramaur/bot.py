@@ -83,10 +83,13 @@ class AuramaurBot:
         self._vpn_down: bool = False
         self._vpn_down_since: float | None = None  # monotonic timestamp
 
-        # Cost enforcement — deque of time.monotonic() timestamps recording
-        # when each trading cycle completed. The _task_cost_enforcement
-        # watchdog counts entries in the last 3600s to detect runaway cycles.
-        self._cycle_timestamps: deque[float] = deque(maxlen=200)
+        # Cost enforcement — deque of (timestamp, schedule_mode) tuples recording
+        # when each trading cycle completed and which adaptive schedule mode was
+        # active. The _task_cost_enforcement watchdog counts only entries whose
+        # mode matches the *current* mode, avoiding false positives when the mode
+        # transitions (e.g. peak → off-peak: peak-rate cycles would far exceed
+        # the off-peak cap if counted against it).
+        self._cycle_timestamps: deque[tuple[float, str]] = deque(maxlen=200)
 
         # Number of concurrent trading-cycle tasks (one per exchange).
         # Set by run() after engines are created. The cost enforcement
@@ -661,44 +664,57 @@ class AuramaurBot:
 
         Called by _task_cost_enforcement on its hourly schedule. Separated
         for testability — tests call this directly without waiting 3600s.
+
+        Each check is independent: a missing ``_model`` attribute (e.g. an
+        EnsembleAnalyzer) only skips the model-identity check — budget and
+        cycle-rate checks still run. Any single violation fires the kill
+        switch and returns immediately.
         """
         analyzer = self._components.get("analyzer")
-        if analyzer is None:
+
+        # Check 1: model identity — only if analyzer exposes _model.
+        # EnsembleAnalyzer has _models (plural) and would skip this check,
+        # which is acceptable since ensembles don't have a single model to
+        # verify. Budget and cycle checks still run below.
+        if analyzer is not None and hasattr(analyzer, "_model"):
+            expected_model = self.settings.nlp.model
+            actual_model = analyzer._model
+            if actual_model != expected_model:
+                await self._fire_cost_kill_switch(
+                    f"model mismatch: expected {expected_model}, got {actual_model}"
+                )
+                return
+        elif analyzer is None:
             log.debug("cost_enforcement.no_analyzer")
-            return
-
-        # Check 1: model identity
-        if not hasattr(analyzer, "_model"):
-            log.error("cost_enforcement.analyzer_missing_model")
-            return
-        expected_model = self.settings.nlp.model
-        actual_model = analyzer._model
-        if actual_model != expected_model:
-            await self._fire_cost_kill_switch(
-                f"model mismatch: expected {expected_model}, got {actual_model}"
+        else:
+            log.warning(
+                "cost_enforcement.no_model_attr",
+                analyzer_type=type(analyzer).__name__,
             )
-            return
 
-        # Check 2: daily call budget
-        if not hasattr(analyzer, "_daily_calls"):
-            log.error("cost_enforcement.analyzer_missing_daily_calls")
-            return
-        budget = self.settings.nlp.daily_claude_call_budget
-        actual_calls = analyzer._daily_calls
-        # budget=0 means unlimited (full_blast preset); skip the check.
-        if budget > 0 and actual_calls > budget:
-            await self._fire_cost_kill_switch(
-                f"daily budget exceeded: {actual_calls}/{budget} calls"
-            )
-            return
+        # Check 2: daily call budget — only if analyzer exposes _daily_calls.
+        if analyzer is not None and hasattr(analyzer, "_daily_calls"):
+            budget = self.settings.nlp.daily_claude_call_budget
+            actual_calls = analyzer._daily_calls
+            # budget=0 means unlimited (full_blast preset); skip the check.
+            if budget > 0 and actual_calls > budget:
+                await self._fire_cost_kill_switch(
+                    f"daily budget exceeded: {actual_calls}/{budget} calls"
+                )
+                return
 
-        # Check 3: cycle frequency
+        # Check 3: cycle frequency — only count cycles from the *current*
+        # schedule mode. The deque stores (timestamp, mode) tuples. Counting
+        # across mode transitions would cause false positives: e.g. 20 peak-
+        # rate cycles would far exceed an off-peak cap of ~3.75.
         now = time.monotonic()
         cutoff = now - 3600
-        cycles_last_hour = sum(1 for ts in self._cycle_timestamps if ts > cutoff)
+        mode = self._get_schedule_mode()
+        cycles_last_hour = sum(
+            1 for ts, m in self._cycle_timestamps if ts > cutoff and m == mode
+        )
 
         base = self.settings.intervals.analysis_seconds
-        mode = self._get_schedule_mode()
         if mode == "quiet":
             multiplier = self.settings.intervals.quiet_multiplier
         elif mode == "off_peak":
@@ -727,13 +743,21 @@ class AuramaurBot:
             )
             return
 
+        # Gather what we can report — model/budget may not exist on all
+        # analyzer types, so default to "n/a" for the log line.
+        reported_model = getattr(analyzer, "_model", "n/a") if analyzer else "n/a"
+        reported_calls = getattr(analyzer, "_daily_calls", "n/a") if analyzer else "n/a"
+        reported_budget = self.settings.nlp.daily_claude_call_budget
+
         log.info(
             "cost_enforcement.ok",
-            model=actual_model,
-            daily_calls=actual_calls,
-            budget=budget,
+            model=reported_model,
+            daily_calls=reported_calls,
+            budget=reported_budget,
             cycles_last_hour=cycles_last_hour,
             max_cycles=round(max_cycles_per_hour),
+            schedule_mode=mode,
+            engine_count=self._engine_count,
         )
 
     async def _task_cost_enforcement(self) -> None:
@@ -798,7 +822,9 @@ class AuramaurBot:
             try:
                 cash = getattr(self, "_last_known_cash", 0.0)
                 await engine.run_cycle(cash_available=cash)
-                self._cycle_timestamps.append(time.monotonic())
+                self._cycle_timestamps.append(
+                    (time.monotonic(), self._get_schedule_mode())
+                )
             except Exception as e:
                 show_error(f"Trading cycle failed ({name}): {e}")
 
