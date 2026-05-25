@@ -662,6 +662,9 @@ class AuramaurBot:
             return
 
         # Check 1: model identity
+        if not hasattr(analyzer, "_model"):
+            log.error("cost_enforcement.analyzer_missing_model")
+            return
         expected_model = self.settings.nlp.model
         actual_model = analyzer._model
         if actual_model != expected_model:
@@ -671,6 +674,9 @@ class AuramaurBot:
             return
 
         # Check 2: daily call budget
+        if not hasattr(analyzer, "_daily_calls"):
+            log.error("cost_enforcement.analyzer_missing_daily_calls")
+            return
         budget = self.settings.nlp.daily_claude_call_budget
         actual_calls = analyzer._daily_calls
         if budget is not None and budget > 0 and actual_calls > budget:
