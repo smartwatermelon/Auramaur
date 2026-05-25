@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from pathlib import Path
 
 import structlog
@@ -23,8 +24,9 @@ from auramaur.exchange.models import Order, OrderSide, OrderType, TokenType
 from auramaur.exchange.protocols import ExchangeClient, MarketDiscovery
 from auramaur.exchange.paper import PaperTrader
 from auramaur.infra.notify import (
+    send_alert,
     send_alert_rate_limited,
-)  # used by _task_profit_withdrawal_alert
+)  # send_alert used by _fire_cost_kill_switch; send_alert_rate_limited by profit alert
 from auramaur.infra.retry import _check_vpn_health
 from auramaur.monitoring.alerts import AlertManager
 from auramaur.monitoring.display import (
@@ -80,6 +82,11 @@ class AuramaurBot:
         # so recovery alerts after a restart report 0 minutes downtime.
         self._vpn_down: bool = False
         self._vpn_down_since: float | None = None  # monotonic timestamp
+
+        # Cost enforcement — deque of time.monotonic() timestamps recording
+        # when each trading cycle completed. The _task_cost_enforcement
+        # watchdog counts entries in the last 3600s to detect runaway cycles.
+        self._cycle_timestamps: deque[float] = deque(maxlen=200)
 
     def _acquire_db_path(self) -> str:
         """Find an available database slot using file locks.
@@ -608,6 +615,126 @@ class AuramaurBot:
             return True
         return False
 
+    async def _fire_cost_kill_switch(self, reason: str) -> None:
+        """Write KILL_SWITCH file and halt bot due to cost enforcement violation.
+
+        Unlike _check_kill_switch (which reads the file), this method writes
+        it. The alert uses send_alert (unrestricted) rather than
+        send_alert_rate_limited — cost violations are critical and must
+        always notify.
+
+        self._running = False is set in a finally block so the bot always
+        halts even if the KILL_SWITCH write or alert delivery fails. Partial
+        failures are logged separately but never suppress the halt.
+        """
+        try:
+            try:
+                Path("KILL_SWITCH").write_text(f"Cost enforcement: {reason}\n")
+            except Exception as write_err:
+                log.error(
+                    "cost_enforcement.kill_switch_write_failed", error=str(write_err)
+                )
+            log.error("cost_enforcement.violation", reason=reason)
+            try:
+                send_alert(
+                    subject="[auramaur] KILL SWITCH: cost enforcement violation",
+                    body=(
+                        f"The cost enforcement watchdog detected a violation and halted the bot.\n\n"
+                        f"Reason: {reason}\n\n"
+                        f"The KILL_SWITCH file has been written. The bot will not restart until\n"
+                        f"you investigate and run: auramaur unkill\n"
+                    ),
+                )
+            except Exception as alert_err:
+                log.error("cost_enforcement.alert_failed", error=str(alert_err))
+        finally:
+            self._running = False
+
+    async def _run_cost_enforcement_check(self) -> None:
+        """Run all three cost enforcement checks once.
+
+        Called by _task_cost_enforcement on its hourly schedule. Separated
+        for testability — tests call this directly without waiting 3600s.
+        """
+        analyzer = self._components.get("analyzer")
+        if analyzer is None:
+            log.debug("cost_enforcement.no_analyzer")
+            return
+
+        # Check 1: model identity
+        expected_model = self.settings.nlp.model
+        actual_model = analyzer._model
+        if actual_model != expected_model:
+            await self._fire_cost_kill_switch(
+                f"model mismatch: expected {expected_model}, got {actual_model}"
+            )
+            return
+
+        # Check 2: daily call budget
+        budget = self.settings.nlp.daily_claude_call_budget
+        actual_calls = analyzer._daily_calls
+        if budget is not None and budget > 0 and actual_calls > budget:
+            await self._fire_cost_kill_switch(
+                f"daily budget exceeded: {actual_calls}/{budget} calls"
+            )
+            return
+
+        # Check 3: cycle frequency
+        now = time.monotonic()
+        cutoff = now - 3600
+        cycles_last_hour = sum(1 for ts in self._cycle_timestamps if ts > cutoff)
+
+        base = self.settings.intervals.analysis_seconds
+        mode = self._get_schedule_mode()
+        if mode == "quiet":
+            multiplier = self.settings.intervals.quiet_multiplier
+        elif mode == "off_peak":
+            multiplier = self.settings.intervals.off_peak_multiplier
+        else:
+            multiplier = 1.0
+
+        expected_interval = base * multiplier
+        if expected_interval <= 0:
+            # Misconfigured analysis_seconds — skip cycle check rather than divide by zero,
+            # but log the anomaly loudly so operators can investigate.
+            log.error(
+                "cost_enforcement.invalid_interval",
+                analysis_seconds=base,
+                multiplier=multiplier,
+            )
+            return
+        max_cycles_per_hour = (3600 / expected_interval) * 1.5
+
+        if cycles_last_hour > max_cycles_per_hour:
+            await self._fire_cost_kill_switch(
+                f"cycle rate exceeded: {cycles_last_hour} cycles/hour, max {max_cycles_per_hour:.0f}"
+            )
+            return
+
+        log.info(
+            "cost_enforcement.ok",
+            model=actual_model,
+            daily_calls=actual_calls,
+            budget=budget,
+            cycles_last_hour=cycles_last_hour,
+            max_cycles=round(max_cycles_per_hour),
+        )
+
+    async def _task_cost_enforcement(self) -> None:
+        """Hourly audit: verify runtime behavior matches cost config.
+
+        Sleeps 3600s between checks. First check after one full hour of
+        runtime to avoid false positives during startup.
+        """
+        while self._running:
+            await asyncio.sleep(3600)
+            if not self._running:
+                return
+            try:
+                await self._run_cost_enforcement_check()
+            except Exception as e:
+                log.error("cost_enforcement.error", error=str(e))
+
     async def _task_market_scan(self, engine: TradingEngine, name: str = "") -> None:
         """Periodically scan and store markets."""
         while self._running:
@@ -655,6 +782,7 @@ class AuramaurBot:
             try:
                 cash = getattr(self, "_last_known_cash", 0.0)
                 await engine.run_cycle(cash_available=cash)
+                self._cycle_timestamps.append(time.monotonic())
             except Exception as e:
                 show_error(f"Trading cycle failed ({name}): {e}")
 
@@ -2459,6 +2587,7 @@ class AuramaurBot:
             asyncio.create_task(
                 self._task_profit_withdrawal_alert(), name="profit_alert"
             ),
+            asyncio.create_task(self._task_cost_enforcement(), name="cost_enforcement"),
         ]
 
         # Portfolio monitor runs whenever any exchange syncer is present so
