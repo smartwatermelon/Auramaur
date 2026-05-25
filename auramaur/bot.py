@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from pathlib import Path
 
 import structlog
@@ -22,7 +23,10 @@ from auramaur.exchange.gamma import GammaClient
 from auramaur.exchange.models import Order, OrderSide, OrderType, TokenType
 from auramaur.exchange.protocols import ExchangeClient, MarketDiscovery
 from auramaur.exchange.paper import PaperTrader
-from auramaur.infra.notify import send_alert_rate_limited
+from auramaur.infra.notify import (
+    send_alert,
+    send_alert_rate_limited,
+)  # send_alert used by _fire_cost_kill_switch; send_alert_rate_limited by profit alert
 from auramaur.infra.retry import _check_vpn_health
 from auramaur.monitoring.alerts import AlertManager
 from auramaur.monitoring.display import (
@@ -78,6 +82,20 @@ class AuramaurBot:
         # so recovery alerts after a restart report 0 minutes downtime.
         self._vpn_down: bool = False
         self._vpn_down_since: float | None = None  # monotonic timestamp
+
+        # Cost enforcement — deque of (timestamp, schedule_mode) tuples recording
+        # when each trading cycle completed and which adaptive schedule mode was
+        # active. The _task_cost_enforcement watchdog counts only entries whose
+        # mode matches the *current* mode, avoiding false positives when the mode
+        # transitions (e.g. peak → off-peak: peak-rate cycles would far exceed
+        # the off-peak cap if counted against it).
+        self._cycle_timestamps: deque[tuple[float, str]] = deque(maxlen=200)
+
+        # Number of concurrent trading-cycle tasks (one per exchange).
+        # Set by run() after engines are created. The cost enforcement
+        # watchdog multiplies the cycle-rate cap by this number so
+        # multi-exchange deployments scale correctly and don't false-trip.
+        self._engine_count: int = 1
 
     def _acquire_db_path(self) -> str:
         """Find an available database slot using file locks.
@@ -606,6 +624,157 @@ class AuramaurBot:
             return True
         return False
 
+    async def _fire_cost_kill_switch(self, reason: str) -> None:
+        """Write KILL_SWITCH file and halt bot due to cost enforcement violation.
+
+        Unlike _check_kill_switch (which reads the file), this method writes
+        it. The alert uses send_alert (unrestricted) rather than
+        send_alert_rate_limited — cost violations are critical and must
+        always notify.
+
+        self._running = False is set in a finally block so the bot always
+        halts even if the KILL_SWITCH write or alert delivery fails. Partial
+        failures are logged separately but never suppress the halt.
+        """
+        try:
+            try:
+                Path("KILL_SWITCH").write_text(f"Cost enforcement: {reason}\n")
+            except Exception as write_err:
+                log.error(
+                    "cost_enforcement.kill_switch_write_failed", error=str(write_err)
+                )
+            log.error("cost_enforcement.violation", reason=reason)
+            try:
+                send_alert(
+                    subject="[auramaur] KILL SWITCH: cost enforcement violation",
+                    body=(
+                        f"The cost enforcement watchdog detected a violation and halted the bot.\n\n"
+                        f"Reason: {reason}\n\n"
+                        f"The KILL_SWITCH file has been written. The bot will not restart until\n"
+                        f"you investigate and run: auramaur unkill\n"
+                    ),
+                )
+            except Exception as alert_err:
+                log.error("cost_enforcement.alert_failed", error=str(alert_err))
+        finally:
+            self._running = False
+
+    async def _run_cost_enforcement_check(self) -> None:
+        """Run all three cost enforcement checks once.
+
+        Called by _task_cost_enforcement on its hourly schedule. Separated
+        for testability — tests call this directly without waiting 3600s.
+
+        Each check is independent: a missing ``_model`` attribute (e.g. an
+        EnsembleAnalyzer) only skips the model-identity check — budget and
+        cycle-rate checks still run. Any single violation fires the kill
+        switch and returns immediately.
+        """
+        analyzer = self._components.get("analyzer")
+
+        # Check 1: model identity — only if analyzer exposes _model.
+        # EnsembleAnalyzer has _models (plural) and would skip this check,
+        # which is acceptable since ensembles don't have a single model to
+        # verify. Budget and cycle checks still run below.
+        if analyzer is not None and hasattr(analyzer, "_model"):
+            expected_model = self.settings.nlp.model
+            actual_model = analyzer._model
+            if actual_model != expected_model:
+                await self._fire_cost_kill_switch(
+                    f"model mismatch: expected {expected_model}, got {actual_model}"
+                )
+                return
+        elif analyzer is None:
+            log.debug("cost_enforcement.no_analyzer")
+        else:
+            log.warning(
+                "cost_enforcement.no_model_attr",
+                analyzer_type=type(analyzer).__name__,
+            )
+
+        # Check 2: daily call budget — only if analyzer exposes _daily_calls.
+        if analyzer is not None and hasattr(analyzer, "_daily_calls"):
+            budget = self.settings.nlp.daily_claude_call_budget
+            actual_calls = analyzer._daily_calls
+            # budget=0 means unlimited (full_blast preset); skip the check.
+            if budget > 0 and actual_calls > budget:
+                await self._fire_cost_kill_switch(
+                    f"daily budget exceeded: {actual_calls}/{budget} calls"
+                )
+                return
+
+        # Check 3: cycle frequency — only count cycles from the *current*
+        # schedule mode. The deque stores (timestamp, mode) tuples. Counting
+        # across mode transitions would cause false positives: e.g. 20 peak-
+        # rate cycles would far exceed an off-peak cap of ~3.75.
+        now = time.monotonic()
+        cutoff = now - 3600
+        mode = self._get_schedule_mode()
+        cycles_last_hour = sum(
+            1 for ts, m in self._cycle_timestamps if ts > cutoff and m == mode
+        )
+
+        base = self.settings.intervals.analysis_seconds
+        if mode == "quiet":
+            multiplier = self.settings.intervals.quiet_multiplier
+        elif mode == "off_peak":
+            multiplier = self.settings.intervals.off_peak_multiplier
+        else:
+            multiplier = 1.0
+
+        expected_interval = base * multiplier
+        if expected_interval <= 0:
+            # Misconfigured analysis_seconds — skip cycle check rather than divide by zero,
+            # but log the anomaly loudly so operators can investigate.
+            log.error(
+                "cost_enforcement.invalid_interval",
+                analysis_seconds=base,
+                multiplier=multiplier,
+            )
+            return
+        # Each exchange gets its own _task_trading_cycle, all appending to
+        # the shared _cycle_timestamps deque. Multiply the per-engine cap
+        # by the engine count so multi-exchange deployments don't false-trip.
+        max_cycles_per_hour = (3600 / expected_interval) * 1.5 * self._engine_count
+
+        if cycles_last_hour > max_cycles_per_hour:
+            await self._fire_cost_kill_switch(
+                f"cycle rate exceeded: {cycles_last_hour} cycles/hour, max {max_cycles_per_hour:.0f}"
+            )
+            return
+
+        # Gather what we can report — model/budget may not exist on all
+        # analyzer types, so default to "n/a" for the log line.
+        reported_model = getattr(analyzer, "_model", "n/a") if analyzer else "n/a"
+        reported_calls = getattr(analyzer, "_daily_calls", "n/a") if analyzer else "n/a"
+        reported_budget = self.settings.nlp.daily_claude_call_budget
+
+        log.info(
+            "cost_enforcement.ok",
+            model=reported_model,
+            daily_calls=reported_calls,
+            budget=reported_budget,
+            cycles_last_hour=cycles_last_hour,
+            max_cycles=round(max_cycles_per_hour),
+            schedule_mode=mode,
+            engine_count=self._engine_count,
+        )
+
+    async def _task_cost_enforcement(self) -> None:
+        """Hourly audit: verify runtime behavior matches cost config.
+
+        Sleeps 3600s between checks. First check after one full hour of
+        runtime to avoid false positives during startup.
+        """
+        while self._running:
+            await asyncio.sleep(3600)
+            if not self._running:
+                return
+            try:
+                await self._run_cost_enforcement_check()
+            except Exception as e:
+                log.error("cost_enforcement.error", error=str(e))
+
     async def _task_market_scan(self, engine: TradingEngine, name: str = "") -> None:
         """Periodically scan and store markets."""
         while self._running:
@@ -653,6 +822,9 @@ class AuramaurBot:
             try:
                 cash = getattr(self, "_last_known_cash", 0.0)
                 await engine.run_cycle(cash_available=cash)
+                self._cycle_timestamps.append(
+                    (time.monotonic(), self._get_schedule_mode())
+                )
             except Exception as e:
                 show_error(f"Trading cycle failed ({name}): {e}")
 
@@ -1181,6 +1353,72 @@ class AuramaurBot:
             if await self._check_kill_switch():
                 return
             await asyncio.sleep(1)
+
+    async def _task_profit_withdrawal_alert(self) -> None:
+        """Hourly check: alert when unrealized P&L crosses withdrawal threshold.
+
+        Calls the syncer to get current positions, computes unrealized P&L
+        via PnLTracker, and sends a rate-limited email when P&L >=
+        profit_threshold. Alert-only — no automatic sell or transfer.
+
+        Note: self.settings.profit_alerts is accessed directly (not via .get())
+        because ProfitAlertConfig is a required field with a default_factory in
+        Settings — it is always present, unlike optional _components entries.
+        """
+        cfg = self.settings.profit_alerts
+        syncer = self._components.get("syncer")
+        if syncer is None:
+            log.info("profit_alert.no_syncer")
+            return
+
+        pnl_tracker = self._components.get("pnl_tracker")
+        if pnl_tracker is None:
+            log.info("profit_alert.no_pnl_tracker")
+            return
+
+        while self._running:
+            if not cfg.enabled:
+                await asyncio.sleep(cfg.check_interval_seconds)
+                continue
+
+            try:
+                positions = await syncer.sync()
+                unrealized = await pnl_tracker.get_unrealized_pnl(positions)
+
+                if unrealized >= cfg.profit_threshold:
+                    log.info(
+                        "profit_alert.triggered",
+                        unrealized_pnl=round(unrealized, 2),
+                        threshold=cfg.profit_threshold,
+                        withdrawal=cfg.withdrawal_amount,
+                    )
+                    send_alert_rate_limited(
+                        subject=(
+                            f"[auramaur] profit alert: ${unrealized:.2f} unrealized"
+                            f" — consider withdrawing ${cfg.withdrawal_amount:.0f}"
+                        ),
+                        body=(
+                            f"Unrealized P&L has reached ${unrealized:.2f}"
+                            f" (threshold: ${cfg.profit_threshold:.2f}).\n"
+                            f"Recommended action: withdraw ${cfg.withdrawal_amount:.2f} from Polymarket.\n\n"
+                            f"Current positions: {len(positions)}\n"
+                            f"Unrealized P&L: ${unrealized:.2f}\n\n"
+                            f"This is an alert only — no automatic withdrawal will occur.\n"
+                            f"To change thresholds: edit profit_alerts in config/defaults.yaml\n"
+                        ),
+                        key="profit_withdrawal",
+                        min_interval=cfg.alert_cooldown_hours * 3600,
+                    )
+                else:
+                    log.debug(
+                        "profit_alert.below_threshold",
+                        unrealized_pnl=round(unrealized, 2),
+                        threshold=cfg.profit_threshold,
+                    )
+            except Exception:
+                log.exception("profit_alert.error")
+
+            await asyncio.sleep(cfg.check_interval_seconds)
 
     async def _task_recalibrate(self) -> None:
         """Periodically refit Platt scaling calibration parameters."""
@@ -2388,6 +2626,10 @@ class AuramaurBot:
             asyncio.create_task(self._task_kill_switch_monitor(), name="kill_switch"),
             asyncio.create_task(self._task_cache_cleanup(), name="cache_cleanup"),
             asyncio.create_task(self._task_recalibrate(), name="recalibrate"),
+            asyncio.create_task(
+                self._task_profit_withdrawal_alert(), name="profit_alert"
+            ),
+            asyncio.create_task(self._task_cost_enforcement(), name="cost_enforcement"),
         ]
 
         # Portfolio monitor runs whenever any exchange syncer is present so
@@ -2434,8 +2676,10 @@ class AuramaurBot:
                 asyncio.create_task(self._task_news_reactor(), name="news_reactor")
             )
 
-        # Per-exchange scan + trade tasks
+        # Per-exchange scan + trade tasks — also record engine count so the
+        # cost enforcement watchdog can normalise the cycle-rate check.
         engines: dict[str, TradingEngine] = self._components["engines"]
+        self._engine_count = max(len(engines), 1)
         for ex_name, engine in engines.items():
             tasks.append(
                 asyncio.create_task(
