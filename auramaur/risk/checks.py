@@ -156,7 +156,7 @@ async def check_min_edge(edge: float, min_edge_pct: float = 5.0) -> CheckResult:
         name="min_edge",
         passed=not too_small,
         reason=(
-            f"Edge {edge:.2f}% below minimum {min_edge_pct:.1f}%" if too_small else ""
+            f"Edge {edge:.2f}% below minimum {min_edge_pct:.2f}%" if too_small else ""
         ),
         value=edge,
     )
