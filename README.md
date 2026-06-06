@@ -1,9 +1,15 @@
 # Auramaur
 
+> **Experiment concluded — June 2026.** After ~6 weeks of paper and limited live trading on
+> Polymarket and Kalshi, the bot's signals were accurate (paper P&L positive, calibration
+> improving) but the edge couldn't clear the combined cost floor: Anthropic API fees per
+> analysis cycle + Polymarket's crypto skim (~2% take + gas) together exceed what the strategy
+> earns. A Fidelity SPAXX sweep fund beats it on a risk-adjusted basis without the operational
+> overhead. The code is archived here as a reference implementation. Upstream improvements were
+> contributed back to [DarriEy/Auramaur](https://github.com/DarriEy/Auramaur).
+
 An autonomous trading bot for prediction markets (Polymarket and Kalshi),
 built in six days by a hydrologist using Claude Code.
-
-It makes (small) money.
 
 ## What it does
 
@@ -71,8 +77,7 @@ interception happens in `exchange/paper.py`. The risk manager in
 
 ## Status
 
-Trades real money on Polymarket and Kalshi as of April 2026. P&L is
-modest. Calibration is live and learning from each market resolution.
+**Archived June 2026.** See the note at the top of this file.
 
 ## License
 
